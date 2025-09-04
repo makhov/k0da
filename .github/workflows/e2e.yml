@@ -1,0 +1,40 @@
+name: e2e
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  e2e:
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+
+      - name: Install kubectl
+        run: |
+          curl -fsSL -o kubectl https://storage.googleapis.com/kubernetes-release/release/$(curl -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)/bin/linux/amd64/kubectl
+          chmod +x kubectl
+          sudo mv kubectl /usr/local/bin/kubectl
+          kubectl version --client --output=yaml
+
+      - name: Build k0da
+        run: |
+          go build -v -o ./k0da ./
+          ./k0da version || true
+
+      - name: Run e2e tests
+        env:
+          K0DA_BIN: ${{ github.workspace }}/k0da
+        run: |
+          go test ./e2e -run TestE2E_ -v
+

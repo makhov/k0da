@@ -1,0 +1,147 @@
+# k0da
+
+🚀 k0da (/ˈkoʊdə/) is a small CLI for creating and managing local Kubernetes clusters using k0s.
+
+Yes, it's like kind, but powered by k0s.
+
+## Features
+
+- Lightweight and fast
+- Full k0s support with all it's features
+- Works with Docker or Podman
+
+## Prerequisites
+
+- Go 1.23+
+- Docker or Podman
+- kubectl
+
+Tip (Podman on macOS): use a rootful machine (`podman machine set --rootful && podman machine stop && podman machine start`).
+
+## Install
+
+```bash
+git clone https://github.com/makhov/k0da.git
+cd k0da
+go build -o k0da
+./k0da version
+```
+
+## Quickstart
+
+```bash
+# Create a cluster with defaults
+./k0da create
+
+# Create a named cluster
+./k0da create --name my-cluster
+
+# List clusters
+./k0da list
+
+# Delete a cluster
+./k0da delete -n my-cluster
+```
+
+When creation finishes, k0da writes/updates a unified kubeconfig at `~/.k0da/clusters/kubeconfig` and switches context to `k0da-<name>`.
+
+```bash
+kubectl --kubeconfig "$HOME/.k0da/clusters/kubeconfig" get nodes
+```
+
+## Create command
+
+```bash
+k0da create [flags]
+
+Flags:
+  -n, --name string      cluster name (default: k0da-cluster)
+  -i, --image string     k0s image to use (overrides config)
+  -c, --config string    path to k0da cluster config file (YAML)
+  -w, --wait             wait for readiness (default true)
+  -t, --timeout string   readiness timeout (default "60s")
+```
+
+## Cluster config (k0da)
+
+- `spec.k0s.config` is a plain k0s configuration (exactly as k0s expects). If present, k0da writes it to the node as `/etc/k0s/k0s.yaml` and starts k0s with `--config /etc/k0s/k0s.yaml`.
+- You can also set extra k0s args in `spec.k0s.args`, and node-level `args`, `ports`, `mounts`, `env`, and `labels`.
+
+Example (`cluster.yaml`):
+
+```yaml
+apiVersion: k0da.k0sproject.io/v1alpha1
+kind: Cluster
+spec:
+  k0s:
+    # You can specify either image or version. If neither set, a default is used.
+    version: v1.33.3-k0s.0
+    args: ["--debug"]
+    # This is a plain k0s config. It will be written to /etc/k0s/k0s.yaml
+    config:
+      apiVersion: k0s.k0sproject.io/v1beta1
+      kind: ClusterConfig
+      metadata:
+        name: my-k0s-cluster
+      spec:
+        network:
+          provider: calico
+
+  nodes:
+    - role: controller
+      # Optional: override the image for this node
+      image: quay.io/k0sproject/k0s:v1.33.2-k0s.0
+      # Extra flags appended to the k0s controller command
+      args: ["--labels=\"k0sproject.io/foo=bar,k0sproject.io/other=xyz\""]
+      # Port mappings (hostIP/hostPort optional). 6443/tcp is added by default.
+      ports:
+        - containerPort: 6443
+          hostPort: 16443
+      # Additional mounts
+      mounts:
+        - type: bind
+          source: /path/on/host
+          target: /mnt/in/container
+          options: ["ro"]
+      # Environment variables inside the node container
+      env:
+        FOO: "bar"
+      # Extra container labels
+      labels:
+        purpose: demo
+
+  options:
+    wait:
+      enabled: true
+    timeout: 90s
+```
+
+Create the cluster from the file:
+
+```bash
+k0da create -c ./cluster.yaml
+```
+
+## Image loading
+
+```bash
+# Load an image archive (tar or OCI layout dir) into the cluster
+k0da load archive ./my-images.tar -n demo
+
+# Load a local image from your host runtime (Docker/Podman) into the cluster
+# This saves the local image to a temporary tar and imports it into k0s containerd
+k0da load image docker.io/library/nginx:alpine -n demo
+```
+
+## Runtime selection
+
+By default k0da auto-detects Docker or Podman. You can override via env vars:
+
+```bash
+export K0DA_RUNTIME=docker        # or podman
+export K0DA_SOCKET=unix:///var/run/docker.sock   # or podman socket/URI
+```
+
+## License
+
+MIT
