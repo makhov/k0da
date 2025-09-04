@@ -1,0 +1,145 @@
+package utils
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/makhov/k0da/internal/runtime"
+)
+
+// fakeRuntime implements runtime.Runtime for tests
+type fakeRuntime struct {
+	execStdout   string
+	execExitCode int
+	execErr      error
+
+	portIP  string
+	port    int
+	portErr error
+}
+
+func (f *fakeRuntime) Name() string { return "fake" }
+func (f *fakeRuntime) RunContainer(ctx context.Context, opts runtime.RunContainerOptions) (string, error) {
+	return "", nil
+}
+func (f *fakeRuntime) ContainerExists(ctx context.Context, name string) (bool, error) {
+	return true, nil
+}
+func (f *fakeRuntime) ContainerIsRunning(ctx context.Context, name string) (bool, error) {
+	return true, nil
+}
+func (f *fakeRuntime) StopContainer(ctx context.Context, name string) error   { return nil }
+func (f *fakeRuntime) RemoveContainer(ctx context.Context, name string) error { return nil }
+func (f *fakeRuntime) ExecInContainer(ctx context.Context, name string, command []string) (string, int, error) {
+	return f.execStdout, f.execExitCode, f.execErr
+}
+func (f *fakeRuntime) GetPortMapping(ctx context.Context, name string, containerPort int, protocol string) (string, int, error) {
+	return f.portIP, f.port, f.portErr
+}
+func (f *fakeRuntime) VolumeExists(ctx context.Context, name string) (bool, error) { return false, nil }
+func (f *fakeRuntime) RemoveVolume(ctx context.Context, name string) error         { return nil }
+func (f *fakeRuntime) ListContainersByLabel(ctx context.Context, labelSelector map[string]string, includeStopped bool) ([]runtime.ContainerInfo, error) {
+	return nil, nil
+}
+func (f *fakeRuntime) CopyToContainer(ctx context.Context, name string, srcPath string, dstPath string) error {
+	return nil
+}
+func (f *fakeRuntime) SaveImageToTar(ctx context.Context, imageRef string, tarPath string) error {
+	return nil
+}
+
+func TestWaitForK0sReady_SucceedsImmediately(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	r := &fakeRuntime{
+		execStdout:   "Kube-api probing successful: true\n",
+		execExitCode: 0,
+	}
+
+	if err := WaitForK0sReady(ctx, r, "test", "2s"); err != nil {
+		t.Fatalf("WaitForK0sReady returned error: %v", err)
+	}
+}
+
+func TestAddAndRemoveClusterToUnifiedKubeconfig(t *testing.T) {
+	// Isolated HOME
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+
+	adminKubeconfigYAML := `apiVersion: v1
+kind: Config
+clusters:
+- name: k0s-admin
+  cluster:
+    server: https://127.0.0.1:6443
+    certificate-authority-data: Cg==
+contexts:
+- name: admin@k0s
+  context:
+    cluster: k0s-admin
+    user: k0s-admin
+users:
+- name: k0s-admin
+  user:
+    client-certificate-data: Cg==
+    client-key-data: Cg==
+`
+
+	r := &fakeRuntime{
+		execStdout:   adminKubeconfigYAML,
+		execExitCode: 0,
+		portIP:       "0.0.0.0",
+		port:         52345,
+	}
+
+	ctx := context.Background()
+	if err := AddClusterToKubeconfig(ctx, r, "test", "test"); err != nil {
+		t.Fatalf("AddClusterToKubeconfig error: %v", err)
+	}
+
+	path := filepath.Join(tmp, ".k0da", "clusters", "kubeconfig")
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("expected kubeconfig at %s, got error: %v", path, err)
+	}
+
+	kc, err := LoadKubeconfig(path)
+	if err != nil {
+		t.Fatalf("LoadKubeconfig error: %v", err)
+	}
+
+	if kc.CurrentContext != "k0da-test" {
+		t.Fatalf("unexpected current context: %q", kc.CurrentContext)
+	}
+	if len(kc.Clusters) != 1 {
+		t.Fatalf("expected 1 cluster, got %d", len(kc.Clusters))
+	}
+	if kc.Clusters[0].Name != "k0da-test" {
+		t.Fatalf("unexpected cluster name: %q", kc.Clusters[0].Name)
+	}
+	if got := kc.Clusters[0].Cluster.Server; got != "https://localhost:52345" {
+		t.Fatalf("unexpected server url: %q", got)
+	}
+
+	// Now remove
+	if err := RemoveClusterFromKubeconfig("test"); err != nil {
+		t.Fatalf("RemoveClusterFromKubeconfig error: %v", err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("expected kubeconfig to be removed, stat err=%v", err)
+	}
+}
+
+func TestGetContainerPort(t *testing.T) {
+	r := &fakeRuntime{portIP: "0.0.0.0", port: 60000}
+	port, err := GetContainerPort(context.Background(), r, "any")
+	if err != nil {
+		t.Fatalf("GetContainerPort error: %v", err)
+	}
+	if port != "60000" {
+		t.Fatalf("expected port '60000', got %q", port)
+	}
+}
