@@ -115,6 +115,9 @@ func (p *Podman) RunContainer(ctx context.Context, opts RunContainerOptions) (st
 			args = append(args, "--security-opt", s)
 		}
 	}
+	if strings.TrimSpace(opts.Network) != "" {
+		args = append(args, "--network", opts.Network)
+	}
 	if len(opts.Publish) > 0 {
 		for _, ps := range opts.Publish {
 			proto := strings.ToLower(ps.Protocol)
@@ -343,6 +346,26 @@ func (p *Podman) SaveImageToTar(ctx context.Context, imageRef string, tarPath st
 	if err != nil {
 		return fmt.Errorf("podman save failed: %s", strings.TrimSpace(string(out)))
 	}
+	return nil
+}
+
+// EnsureNetwork ensures a user-defined network exists with the given name.
+func (p *Podman) EnsureNetwork(ctx context.Context, name string) error {
+	if strings.TrimSpace(name) == "" {
+		return nil
+	}
+	// podman network inspect <name>
+	cmd := p.withEnv(exec.CommandContext(ctx, "podman", p.argsWithConnection([]string{"network", "inspect", name})...))
+	if err := cmd.Run(); err == nil {
+		return nil
+	}
+	// create attachable bridge network by default
+	cmd = p.withEnv(exec.CommandContext(ctx, "podman", p.argsWithConnection([]string{"network", "create", name})...))
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("podman network create failed: %s", strings.TrimSpace(string(out)))
+	}
+	_ = out
 	return nil
 }
 

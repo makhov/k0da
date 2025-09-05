@@ -99,6 +99,11 @@ func (d *Docker) RunContainer(ctx context.Context, opts RunContainerOptions) (st
 	}
 
 	networking := &network.NetworkingConfig{}
+	if strings.TrimSpace(opts.Network) != "" {
+		networking.EndpointsConfig = map[string]*network.EndpointSettings{
+			opts.Network: {},
+		}
+	}
 
 	resp, err := d.cli.ContainerCreate(ctx, config, hostConfig, networking, nil, opts.Name)
 	if err != nil {
@@ -286,4 +291,25 @@ func natPortBindings(publish []PortSpec) nat.PortMap {
 		m[portKey] = append(m[portKey], b)
 	}
 	return m
+}
+
+// EnsureNetwork ensures a user-defined bridge network exists with the given name.
+func (d *Docker) EnsureNetwork(ctx context.Context, name string) error {
+	if strings.TrimSpace(name) == "" {
+		return nil
+	}
+	// Check: docker network inspect <name>
+	cmd := exec.CommandContext(ctx, "docker", "network", "inspect", name)
+	if out, err := cmd.CombinedOutput(); err == nil && len(out) > 0 {
+		return nil
+	}
+	// Create
+	args := []string{"network", "create", "--driver", "bridge", "--attachable", "--label", "k0da.network=true", "--label", "k0da.network.name=" + name, name}
+	cmd = exec.CommandContext(ctx, "docker", args...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("docker network create failed: %s", strings.TrimSpace(string(out)))
+	}
+	_ = out
+	return nil
 }

@@ -51,6 +51,8 @@ func (f *fakeRuntime) SaveImageToTar(ctx context.Context, imageRef string, tarPa
 	return nil
 }
 
+func (f *fakeRuntime) EnsureNetwork(ctx context.Context, name string) error { return nil }
+
 func TestWaitForK0sReady_SucceedsImmediately(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()

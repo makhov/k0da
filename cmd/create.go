@@ -186,6 +186,12 @@ func createK0sCluster(ctx context.Context, b runtime.Runtime, name, image string
 		effectiveImage = node.Image
 	}
 
+	// Ensure network exists and attach container to it (kind-like shared network)
+	networkName := "k0da"
+	if err := b.EnsureNetwork(ctx, networkName); err != nil {
+		return fmt.Errorf("failed to ensure network: %w", err)
+	}
+
 	_, err := b.RunContainer(ctx, runtime.RunContainerOptions{
 		Name:        containerName,
 		Hostname:    hostname,
@@ -199,6 +205,7 @@ func createK0sCluster(ctx context.Context, b runtime.Runtime, name, image string
 		Privileged:  true,
 		//AutoRemove:  true,
 		Publish: publish,
+		Network: networkName,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create container: %w", err)

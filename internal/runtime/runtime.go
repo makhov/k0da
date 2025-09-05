@@ -27,6 +27,9 @@ type RunContainerOptions struct {
 	Privileged  bool
 	AutoRemove  bool
 	Publish     []PortSpec
+	// Network is the name of the user-defined network to attach this container to.
+	// If empty, the runtime default network is used.
+	Network string
 }
 
 // Mount describes a container mount
@@ -126,6 +129,10 @@ type Runtime interface {
 
 	// SaveImageToTar saves a local image from the host runtime into a tar file at tarPath
 	SaveImageToTar(ctx context.Context, imageRef string, tarPath string) error
+
+	// EnsureNetwork ensures a user-defined network with the given name exists.
+	// It should be idempotent.
+	EnsureNetwork(ctx context.Context, name string) error
 }
 
 // Factory constructs a Runtime given a socket URI (may be empty for default).
