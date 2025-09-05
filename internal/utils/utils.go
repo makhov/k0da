@@ -148,7 +148,25 @@ func SaveKubeconfig(kubeconfig *Kubeconfig, filePath string) error {
 	return nil
 }
 
-// AddClusterToKubeconfig adds a new cluster to the unified kubeconfig
+// defaultKubeconfigPath returns the path to the default kubeconfig file
+// (first entry of KUBECONFIG if set, otherwise $HOME/.kube/config)
+func defaultKubeconfigPath() string {
+	if v := strings.TrimSpace(os.Getenv("KUBECONFIG")); v != "" {
+		parts := strings.Split(v, string(os.PathListSeparator))
+		if len(parts) > 0 && strings.TrimSpace(parts[0]) != "" {
+			return parts[0]
+		}
+	}
+	home := os.Getenv("HOME")
+	if strings.TrimSpace(home) == "" {
+		if h, err := os.UserHomeDir(); err == nil {
+			home = h
+		}
+	}
+	return filepath.Join(home, ".kube", "config")
+}
+
+// AddClusterToKubeconfig adds a new cluster to the default kubeconfig
 func AddClusterToKubeconfig(ctx context.Context, b runtime.Runtime, clusterName, containerName string) error {
 	// Get the original kubeconfig from the container
 	stdout, exit, err := b.ExecInContainer(ctx, containerName, []string{"k0s", "kubeconfig", "admin"})
@@ -173,13 +191,11 @@ func AddClusterToKubeconfig(ctx context.Context, b runtime.Runtime, clusterName,
 		containerKubeconfig.Clusters[0].Cluster.Server = fmt.Sprintf("https://localhost:%s", port)
 	}
 
-	// Load or create the unified kubeconfig
-	unifiedKubeconfigPath := filepath.Join(os.Getenv("HOME"), ".k0da", "clusters", "kubeconfig")
-	var unifiedKubeconfig *Kubeconfig
-
-	if _, err := os.Stat(unifiedKubeconfigPath); os.IsNotExist(err) {
-		// Create new unified kubeconfig
-		unifiedKubeconfig = &Kubeconfig{
+	// Load or create the default kubeconfig
+	kubeconfigPath := defaultKubeconfigPath()
+	var kc *Kubeconfig
+	if _, err := os.Stat(kubeconfigPath); os.IsNotExist(err) {
+		kc = &Kubeconfig{
 			APIVersion:     "v1",
 			Kind:           "Config",
 			Clusters:       []NamedCluster{},
@@ -189,32 +205,29 @@ func AddClusterToKubeconfig(ctx context.Context, b runtime.Runtime, clusterName,
 			Preferences:    make(map[string]interface{}),
 		}
 	} else {
-		// Load existing unified kubeconfig
-		unifiedKubeconfig, err = LoadKubeconfig(unifiedKubeconfigPath)
+		kc, err = LoadKubeconfig(kubeconfigPath)
 		if err != nil {
-			return fmt.Errorf("failed to load unified kubeconfig: %w", err)
+			return fmt.Errorf("failed to load kubeconfig: %w", err)
 		}
 	}
 
-	// Remove existing cluster if it exists
-	unifiedKubeconfig = removeClusterFromKubeconfig(unifiedKubeconfig, clusterName)
+	// Remove existing cluster/context/user with same names
+	kc = removeClusterFromKubeconfig(kc, clusterName)
 
-	// Add the new cluster
 	clusterNameFormatted := fmt.Sprintf("k0da-%s", clusterName)
 	contextNameFormatted := fmt.Sprintf("k0da-%s", clusterName)
 	userNameFormatted := fmt.Sprintf("k0da-%s", clusterName)
 
 	// Add cluster
 	if len(containerKubeconfig.Clusters) > 0 {
-		unifiedKubeconfig.Clusters = append(unifiedKubeconfig.Clusters, NamedCluster{
+		kc.Clusters = append(kc.Clusters, NamedCluster{
 			Name:    clusterNameFormatted,
 			Cluster: containerKubeconfig.Clusters[0].Cluster,
 		})
 	}
-
 	// Add context
 	if len(containerKubeconfig.Contexts) > 0 {
-		unifiedKubeconfig.Contexts = append(unifiedKubeconfig.Contexts, NamedContext{
+		kc.Contexts = append(kc.Contexts, NamedContext{
 			Name: contextNameFormatted,
 			Context: Context{
 				Cluster: clusterNameFormatted,
@@ -222,70 +235,61 @@ func AddClusterToKubeconfig(ctx context.Context, b runtime.Runtime, clusterName,
 			},
 		})
 	}
-
 	// Add user
 	if len(containerKubeconfig.Users) > 0 {
-		unifiedKubeconfig.Users = append(unifiedKubeconfig.Users, NamedUser{
+		kc.Users = append(kc.Users, NamedUser{
 			Name: userNameFormatted,
 			User: containerKubeconfig.Users[0].User,
 		})
 	}
 
 	// Set as current context
-	unifiedKubeconfig.CurrentContext = contextNameFormatted
+	kc.CurrentContext = contextNameFormatted
 
-	// Save the unified kubeconfig
-	if err := SaveKubeconfig(unifiedKubeconfig, unifiedKubeconfigPath); err != nil {
-		return fmt.Errorf("failed to save unified kubeconfig: %w", err)
+	// Save kubeconfig
+	if err := SaveKubeconfig(kc, kubeconfigPath); err != nil {
+		return fmt.Errorf("failed to save kubeconfig: %w", err)
 	}
 
-	fmt.Printf("✅ Cluster '%s' added to unified kubeconfig\n", clusterName)
+	fmt.Printf("✅ Cluster '%s' added to kubeconfig (%s)\n", clusterName, kubeconfigPath)
 	fmt.Printf("✅ Switched to context 'k0da-%s'\n", clusterName)
-	fmt.Printf("To use this cluster, run: kubectl --kubeconfig %s get nodes\n", unifiedKubeconfigPath)
+	fmt.Printf("To use this cluster, run: kubectl config use-context k0da-%s\n", clusterName)
 
 	return nil
 }
 
-// RemoveClusterFromKubeconfig removes a cluster from the unified kubeconfig
+// RemoveClusterFromKubeconfig removes a cluster from the default kubeconfig
 func RemoveClusterFromKubeconfig(clusterName string) error {
-	unifiedKubeconfigPath := filepath.Join(os.Getenv("HOME"), ".k0da", "clusters", "kubeconfig")
+	kubeconfigPath := defaultKubeconfigPath()
 
-	if _, err := os.Stat(unifiedKubeconfigPath); os.IsNotExist(err) {
-		return nil // No unified kubeconfig exists
-	}
-
-	unifiedKubeconfig, err := LoadKubeconfig(unifiedKubeconfigPath)
-	if err != nil {
-		return fmt.Errorf("failed to load unified kubeconfig: %w", err)
-	}
-
-	// Remove the cluster
-	unifiedKubeconfig = removeClusterFromKubeconfig(unifiedKubeconfig, clusterName)
-
-	// If no clusters left, remove the file
-	if len(unifiedKubeconfig.Clusters) == 0 {
-		if err := os.Remove(unifiedKubeconfigPath); err != nil {
-			return fmt.Errorf("failed to remove empty kubeconfig: %w", err)
-		}
-		fmt.Printf("✅ Removed empty unified kubeconfig\n")
+	var kc *Kubeconfig
+	if _, err := os.Stat(kubeconfigPath); os.IsNotExist(err) {
 		return nil
 	}
+	var err error
+	kc, err = LoadKubeconfig(kubeconfigPath)
+	if err != nil {
+		return fmt.Errorf("failed to load kubeconfig: %w", err)
+	}
 
-	// If current context was removed, set to first available context
-	if unifiedKubeconfig.CurrentContext == fmt.Sprintf("k0da-%s", clusterName) {
-		if len(unifiedKubeconfig.Contexts) > 0 {
-			unifiedKubeconfig.CurrentContext = unifiedKubeconfig.Contexts[0].Name
+	// Remove the cluster/context/user
+	kc = removeClusterFromKubeconfig(kc, clusterName)
+
+	// If current context was removed, set to first available context (if any)
+	if kc.CurrentContext == fmt.Sprintf("k0da-%s", clusterName) {
+		if len(kc.Contexts) > 0 {
+			kc.CurrentContext = kc.Contexts[0].Name
 		} else {
-			unifiedKubeconfig.CurrentContext = ""
+			kc.CurrentContext = ""
 		}
 	}
 
-	// Save the updated kubeconfig
-	if err := SaveKubeconfig(unifiedKubeconfig, unifiedKubeconfigPath); err != nil {
-		return fmt.Errorf("failed to save unified kubeconfig: %w", err)
+	// Save the updated kubeconfig (do not delete the file even if empty)
+	if err := SaveKubeconfig(kc, kubeconfigPath); err != nil {
+		return fmt.Errorf("failed to save kubeconfig: %w", err)
 	}
 
-	fmt.Printf("✅ Cluster '%s' removed from unified kubeconfig\n", clusterName)
+	fmt.Printf("✅ Cluster '%s' removed from kubeconfig\n", clusterName)
 	return nil
 }
 
