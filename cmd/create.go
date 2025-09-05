@@ -105,7 +105,7 @@ func createK0sCluster(ctx context.Context, b runtime.Runtime, name, image string
 	fmt.Printf("Creating container '%s' with image '%s' using %s...\n", containerName, image, b.Name())
 
 	// Build command args
-	cmdArgs := []string{"k0s", "controller", "--enable-worker", "--no-taints"}
+	cmdArgs := []string{"k0s", "controller", "--enable-worker", "--no-taints", "--logging", "containerd=warning,etcd=warning"}
 	if strings.TrimSpace(k0sConfigHostPath) != "" {
 		cmdArgs = append(cmdArgs, "--config", "/etc/k0s/k0s.yaml")
 	}
