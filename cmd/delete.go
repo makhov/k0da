@@ -10,8 +10,9 @@ import (
 
 // deleteCmd represents the delete command
 var deleteCmd = &cobra.Command{
-	Use:   "delete [cluster-name]",
-	Short: "Delete a k0s cluster",
+	Use:     "delete [cluster-name]",
+	Aliases: []string{"rm", "del", "remove"},
+	Short:   "Delete a k0s cluster",
 	Long: `Delete a k0s cluster with the specified name.
 This command will stop and remove the container associated with the cluster.
 The cluster name can be provided as an argument or via the --name flag.`,

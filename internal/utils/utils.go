@@ -251,10 +251,6 @@ func AddClusterToKubeconfig(ctx context.Context, b runtime.Runtime, clusterName,
 		return fmt.Errorf("failed to save kubeconfig: %w", err)
 	}
 
-	fmt.Printf("✅ Cluster '%s' added to kubeconfig (%s)\n", clusterName, kubeconfigPath)
-	fmt.Printf("✅ Switched to context 'k0da-%s'\n", clusterName)
-	fmt.Printf("To use this cluster, run: kubectl config use-context k0da-%s\n", clusterName)
-
 	return nil
 }
 
@@ -289,7 +285,6 @@ func RemoveClusterFromKubeconfig(clusterName string) error {
 		return fmt.Errorf("failed to save kubeconfig: %w", err)
 	}
 
-	fmt.Printf("✅ Cluster '%s' removed from kubeconfig\n", clusterName)
 	return nil
 }
 

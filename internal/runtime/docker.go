@@ -292,24 +292,3 @@ func natPortBindings(publish []PortSpec) nat.PortMap {
 	}
 	return m
 }
-
-// EnsureNetwork ensures a user-defined bridge network exists with the given name.
-func (d *Docker) EnsureNetwork(ctx context.Context, name string) error {
-	if strings.TrimSpace(name) == "" {
-		return nil
-	}
-	// Check: docker network inspect <name>
-	cmd := exec.CommandContext(ctx, "docker", "network", "inspect", name)
-	if out, err := cmd.CombinedOutput(); err == nil && len(out) > 0 {
-		return nil
-	}
-	// Create
-	args := []string{"network", "create", "--driver", "bridge", "--attachable", "--label", "k0da.network=true", "--label", "k0da.network.name=" + name, name}
-	cmd = exec.CommandContext(ctx, "docker", args...)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("docker network create failed: %s", strings.TrimSpace(string(out)))
-	}
-	_ = out
-	return nil
-}
