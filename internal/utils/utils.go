@@ -188,7 +188,7 @@ func AddClusterToKubeconfig(ctx context.Context, b runtime.Runtime, clusterName,
 
 	// Update the server URL with correct host and port
 	if len(containerKubeconfig.Clusters) > 0 {
-		containerKubeconfig.Clusters[0].Cluster.Server = fmt.Sprintf("https://localhost:%s", port)
+		containerKubeconfig.Clusters[0].Cluster.Server = fmt.Sprintf("https://127.0.0.1:%s", port)
 	}
 
 	// Load or create the default kubeconfig
