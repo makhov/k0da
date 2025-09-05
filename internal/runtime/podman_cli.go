@@ -71,7 +71,7 @@ func (p *Podman) argsWithConnection(args []string) []string {
 }
 
 func (p *Podman) RunContainer(ctx context.Context, opts RunContainerOptions) (string, error) {
-	args := []string{"run", "-d"}
+	args := []string{"run", "-d", "--restart", "unless-stopped"}
 	if strings.TrimSpace(opts.Name) != "" {
 		args = append(args, "--name", opts.Name)
 	}

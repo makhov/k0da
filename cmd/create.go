@@ -120,9 +120,8 @@ func createK0sCluster(ctx context.Context, b runtime.Runtime, name, image string
 		{Type: "bind", Source: "/lib/modules", Target: "/lib/modules", Options: []string{"ro"}},
 	}
 	if strings.TrimSpace(k0sConfigHostPath) != "" {
-		// Mount host directory containing k0s.yaml into /etc/k0s
-		hostCfgDir := filepath.Dir(k0sConfigHostPath)
-		mounts = append(mounts, runtime.Mount{Type: "bind", Source: hostCfgDir, Target: "/etc/k0s", Options: []string{"ro"}})
+		// Mount only the k0s.yaml file as read-only, leaving /etc/k0s writable
+		mounts = append(mounts, runtime.Mount{Type: "bind", Source: k0sConfigHostPath, Target: "/etc/k0s/k0s.yaml", Options: []string{"ro"}})
 	}
 
 	// Node overrides/extensions
@@ -157,6 +156,23 @@ func createK0sCluster(ctx context.Context, b runtime.Runtime, name, image string
 	}
 	if !hasAPI {
 		publish = append(publish, runtime.PortSpec{ContainerPort: 6443, Protocol: "tcp"})
+	}
+	// Ensure API port is explicitly mapped to a fixed host port
+	// Locate API mapping entry
+	var apiPortIndex = -1
+	for i := range publish {
+		if publish[i].ContainerPort == 6443 && (publish[i].Protocol == "" || strings.ToLower(publish[i].Protocol) == "tcp") {
+			apiPortIndex = i
+			break
+		}
+	}
+	if apiPortIndex != -1 {
+		if publish[apiPortIndex].HostPort == 0 {
+			hostIP := publish[apiPortIndex].HostIP
+			if p, err := utils.AllocateHostPort(hostIP); err == nil && p > 0 {
+				publish[apiPortIndex].HostPort = p
+			}
+		}
 	}
 
 	// Env vars
@@ -210,6 +226,8 @@ func createK0sCluster(ctx context.Context, b runtime.Runtime, name, image string
 	if err != nil {
 		return fmt.Errorf("failed to create container: %w", err)
 	}
+	// No file persistence: explicit HostPort ensures Docker/Podman keep mapping across daemon restarts
+
 	fmt.Printf("✅ Container created successfully\n")
 
 	if wait {
