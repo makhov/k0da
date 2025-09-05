@@ -3,13 +3,15 @@ package utils
 import (
 	"context"
 	"fmt"
-	"github.com/makhov/k0da/internal/runtime"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/makhov/k0da/internal/runtime"
 )
 
 // WaitForK0sReady waits for k0s to be ready in a container
@@ -54,6 +56,25 @@ func isK0sReady(ctx context.Context, r runtime.Runtime, containerName string) bo
 		return false
 	}
 	return strings.Contains(stdout, "Kube-api probing successful: true")
+}
+
+// AllocateHostPort reserves a free TCP port on the given host IP (defaults to 0.0.0.0).
+// It opens a listener on hostIP:0, reads the assigned port, then closes the listener
+// and returns the port number. Returns 0 if allocation failed.
+func AllocateHostPort(hostIP string) (int, error) {
+	hip := strings.TrimSpace(hostIP)
+	if hip == "" {
+		hip = "0.0.0.0"
+	}
+	ln, err := net.Listen("tcp", hip+":0")
+	if err != nil {
+		return 0, err
+	}
+	defer ln.Close()
+	if ta, ok := ln.Addr().(*net.TCPAddr); ok {
+		return ta.Port, nil
+	}
+	return 0, fmt.Errorf("unable to determine allocated port")
 }
 
 // GetContainerPort gets the external port mapping for a container

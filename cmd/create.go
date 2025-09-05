@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	k0daconfig "github.com/makhov/k0da/internal/config"
@@ -106,7 +105,7 @@ func createK0sCluster(ctx context.Context, b runtime.Runtime, name, image string
 	fmt.Printf("Creating container '%s' with image '%s' using %s...\n", containerName, image, b.Name())
 
 	// Build command args
-	cmdArgs := []string{"k0s", "controller", "--enable-worker", "--no-taints", "--logging", "containerd=warning,etcd=warning"}
+	cmdArgs := []string{"k0s", "controller", "--enable-worker", "--no-taints"}
 	if strings.TrimSpace(k0sConfigHostPath) != "" {
 		cmdArgs = append(cmdArgs, "--config", "/etc/k0s/k0s.yaml")
 	}
@@ -159,20 +158,20 @@ func createK0sCluster(ctx context.Context, b runtime.Runtime, name, image string
 	if !hasAPI {
 		publish = append(publish, runtime.PortSpec{ContainerPort: 6443, Protocol: "tcp"})
 	}
-	// Reuse previously assigned random host port if present
-	clusterDir2 := filepath.Join(os.Getenv("HOME"), ".k0da", "clusters", name)
-	apiPortFile := filepath.Join(clusterDir2, "api-port")
-	var savedHostPort int
-	if b, err := os.ReadFile(apiPortFile); err == nil {
-		if p, err2 := strconv.Atoi(strings.TrimSpace(string(b))); err2 == nil && p > 0 {
-			savedHostPort = p
+	// Ensure API port is explicitly mapped to a fixed host port
+	// Locate API mapping entry
+	var apiPortIndex = -1
+	for i := range publish {
+		if publish[i].ContainerPort == 6443 && (publish[i].Protocol == "" || strings.ToLower(publish[i].Protocol) == "tcp") {
+			apiPortIndex = i
+			break
 		}
 	}
-	if savedHostPort > 0 {
-		for i := range publish {
-			if publish[i].ContainerPort == 6443 && (publish[i].Protocol == "" || strings.ToLower(publish[i].Protocol) == "tcp") && publish[i].HostPort == 0 {
-				publish[i].HostPort = savedHostPort
-				break
+	if apiPortIndex != -1 {
+		if publish[apiPortIndex].HostPort == 0 {
+			hostIP := publish[apiPortIndex].HostIP
+			if p, err := utils.AllocateHostPort(hostIP); err == nil && p > 0 {
+				publish[apiPortIndex].HostPort = p
 			}
 		}
 	}
@@ -228,10 +227,7 @@ func createK0sCluster(ctx context.Context, b runtime.Runtime, name, image string
 	if err != nil {
 		return fmt.Errorf("failed to create container: %w", err)
 	}
-	// Persist the assigned API host port for future reuse
-	if _, port, errPM := b.GetPortMapping(ctx, containerName, 6443, "tcp"); errPM == nil && port > 0 {
-		_ = os.WriteFile(apiPortFile, []byte(fmt.Sprintf("%d", port)), 0644)
-	}
+	// No file persistence: explicit HostPort ensures Docker/Podman keep mapping across daemon restarts
 
 	fmt.Printf("✅ Container created successfully\n")
 
