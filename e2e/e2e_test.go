@@ -176,7 +176,7 @@ func getKubeconfigPath(t *testing.T) string {
 	if err != nil {
 		t.Fatalf("home dir: %v", err)
 	}
-	return filepath.Join(h, ".k0da", "clusters", "kubeconfig")
+	return filepath.Join(h, ".kube", "config")
 }
 
 func runKubectl(t *testing.T, kubeconfig string, contextName string, args ...string) (string, int) {

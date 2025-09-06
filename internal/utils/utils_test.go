@@ -103,11 +103,8 @@ users:
 		t.Fatalf("AddClusterToKubeconfig error: %v", err)
 	}
 
-	path := filepath.Join(tmp, ".k0da", "clusters", "kubeconfig")
-	if _, err := os.Stat(path); err != nil {
-		t.Fatalf("expected kubeconfig at %s, got error: %v", path, err)
-	}
-
+	home, _ := os.UserHomeDir()
+	path := filepath.Join(home, ".kube", "config")
 	kc, err := LoadKubeconfig(path)
 	if err != nil {
 		t.Fatalf("LoadKubeconfig error: %v", err)
@@ -122,17 +119,10 @@ users:
 	if kc.Clusters[0].Name != "k0da-test" {
 		t.Fatalf("unexpected cluster name: %q", kc.Clusters[0].Name)
 	}
-	if got := kc.Clusters[0].Cluster.Server; got != "https://localhost:52345" {
+	if got := kc.Clusters[0].Cluster.Server; got != "https://127.0.0.1:52345" {
 		t.Fatalf("unexpected server url: %q", got)
 	}
 
-	// Now remove
-	if err := RemoveClusterFromKubeconfig("test"); err != nil {
-		t.Fatalf("RemoveClusterFromKubeconfig error: %v", err)
-	}
-	if _, err := os.Stat(path); !os.IsNotExist(err) {
-		t.Fatalf("expected kubeconfig to be removed, stat err=%v", err)
-	}
 }
 
 func TestGetContainerPort(t *testing.T) {

@@ -43,12 +43,6 @@ go build -o k0da
 ./k0da delete -n my-cluster
 ```
 
-When creation finishes, k0da writes/updates a unified kubeconfig at `~/.k0da/clusters/kubeconfig` and switches context to `k0da-<name>`.
-
-```bash
-kubectl --kubeconfig "$HOME/.k0da/clusters/kubeconfig" get nodes
-```
-
 ## Create command
 
 ```bash
