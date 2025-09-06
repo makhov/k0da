@@ -111,9 +111,7 @@ spec:
         purpose: demo
 
   options:
-    wait:
-      enabled: true
-    timeout: 90s
+    network: kind # the network to use for the node containers (default: k0da)
 ```
 
 Create the cluster from the file:

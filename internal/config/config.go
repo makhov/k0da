@@ -7,6 +7,12 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+const (
+	DefaultNetwork      = "k0da"
+	DefaultK0sVersion   = "v1.33.3-k0s.0"
+	DefaultK0sImageRepo = "quay.io/k0sproject/k0s"
+)
+
 // ClusterConfig is a kind-like local cluster config aligned with k0s family style.
 // Supports one or more nodes (we currently run single-node but keep structure future-proof).
 type ClusterConfig struct {
@@ -16,8 +22,13 @@ type ClusterConfig struct {
 }
 
 type Spec struct {
-	Nodes []NodeSpec `yaml:"nodes"`
-	K0s   K0sSpec    `yaml:"k0s"`
+	Nodes   []NodeSpec  `yaml:"nodes"`
+	K0s     K0sSpec     `yaml:"k0s"`
+	Options OptionsSpec `yaml:"options,omitempty"`
+}
+
+type OptionsSpec struct {
+	Network string `yaml:"network,omitempty"` // bridge network name, if empty, default "k0da" network will be used
 }
 
 type NodeSpec struct {
@@ -80,6 +91,10 @@ func (c *ClusterConfig) Validate() error {
 			return fmt.Errorf("node role is required")
 		}
 	}
+	if c.Spec.Options.Network == "" {
+		c.Spec.Options.Network = DefaultNetwork
+	}
+
 	return nil
 }
 
@@ -117,9 +132,6 @@ func (c *ClusterConfig) MaybeWriteInlineK0sConfig(dir string) (string, error) {
 	}
 	return p, nil
 }
-
-const DefaultK0sVersion = "v1.33.3-k0s.0"
-const DefaultK0sImageRepo = "quay.io/k0sproject/k0s"
 
 // EffectiveImage returns the k0s image to use based on precedence:
 // 1) explicit image

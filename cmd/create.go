@@ -124,6 +124,8 @@ func createK0sCluster(ctx context.Context, b runtime.Runtime, name, image string
 		mounts = append(mounts, runtime.Mount{Type: "bind", Source: k0sConfigHostPath, Target: "/etc/k0s/k0s.yaml", Options: []string{"ro"}})
 	}
 
+	// Docker socket mount is handled automatically by the Docker runtime when applicable
+
 	// Node overrides/extensions
 	var node *k0daconfig.NodeSpec
 	if cc != nil {
@@ -203,7 +205,10 @@ func createK0sCluster(ctx context.Context, b runtime.Runtime, name, image string
 	}
 
 	// Ensure network exists and attach container to it (kind-like shared network)
-	networkName := "k0da"
+	networkName := k0daconfig.DefaultNetwork
+	if cc != nil {
+		networkName = cc.Spec.Options.Network
+	}
 	if err := b.EnsureNetwork(ctx, networkName); err != nil {
 		return fmt.Errorf("failed to ensure network: %w", err)
 	}
