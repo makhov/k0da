@@ -20,8 +20,9 @@ import (
 )
 
 type Docker struct {
-	cli  *dockerClient.Client
-	name string
+	cli    *dockerClient.Client
+	name   string
+	socket string
 }
 
 func NewDockerRuntime(ctx context.Context, socket string) (*Docker, error) {
@@ -37,7 +38,7 @@ func NewDockerRuntime(ctx context.Context, socket string) (*Docker, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Docker{cli: client, name: "docker"}, nil
+	return &Docker{cli: client, name: "docker", socket: socket}, nil
 }
 
 func (d *Docker) Name() string { return d.name }
@@ -81,6 +82,12 @@ func (d *Docker) RunContainer(ctx context.Context, opts RunContainerOptions) (st
 		hostConfig.Binds = opts.Mounts.ToBinds()
 	}
 
+	hostSock := d.socket
+	if strings.HasPrefix(hostSock, "unix://") {
+		hostSock = strings.TrimPrefix(d.socket, "unix://")
+	}
+	hostConfig.Binds = append(hostConfig.Binds, hostSock+":"+"/var/run/docker.sock")
+	fmt.Println(hostConfig.Binds)
 	// Port publishing
 	if len(opts.Publish) > 0 {
 		hostConfig.PortBindings = natPortBindings(opts.Publish)
