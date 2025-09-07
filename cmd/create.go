@@ -71,7 +71,7 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create cluster directory
-	clusterDir := filepath.Join(os.Getenv("HOME"), ".k0da", "clusters", clusterName)
+	clusterDir := cc.ClusterDir(clusterName)
 	if err := os.MkdirAll(clusterDir, 0755); err != nil {
 		return fmt.Errorf("failed to create cluster directory: %w", err)
 	}
@@ -106,7 +106,7 @@ func createK0sCluster(ctx context.Context, b runtime.Runtime, name, image string
 	fmt.Printf("Creating container '%s' with image '%s' using %s...\n", containerName, image, b.Name())
 
 	// Build command args
-	cmdArgs := []string{"k0s", "controller", "--enable-worker", "--no-taints"}
+	cmdArgs := []string{"k0s", "controller", "--enable-worker", "--no-taints", "--enable-dynamic-config"}
 	if strings.TrimSpace(k0sConfigHostPath) != "" || (cc != nil && len(cc.Spec.K0s.Config) > 0) {
 		cmdArgs = append(cmdArgs, "--config", "/etc/k0s/k0s.yaml")
 	}
@@ -116,18 +116,9 @@ func createK0sCluster(ctx context.Context, b runtime.Runtime, name, image string
 	}
 
 	// Ensure manifests directory exists on host for k0s manifests and copy manifests into it
-	hostK0daManifestsPath := filepath.Join(os.Getenv("HOME"), ".k0da", "clusters", name, "manifests")
-	if err := os.MkdirAll(hostK0daManifestsPath, 0755); err != nil {
-		return fmt.Errorf("failed to create manifests directory: %w", err)
-	}
-	if cc != nil && len(cc.Spec.K0s.Manifests) > 0 {
-		baseDir := ""
-		if strings.TrimSpace(cc.SourcePath) != "" {
-			baseDir = filepath.Dir(cc.SourcePath)
-		}
-		if err := copyManifestsToDir(cc.Spec.K0s.Manifests, baseDir, hostK0daManifestsPath); err != nil {
-			return fmt.Errorf("failed to stage manifests: %w", err)
-		}
+	hostK0daManifestsPath := cc.ManifestDir(name)
+	if err := utils.CopyManifestsToDir(cc, hostK0daManifestsPath); err != nil {
+		return fmt.Errorf("failed to stage manifests: %w", err)
 	}
 
 	// Build mounts

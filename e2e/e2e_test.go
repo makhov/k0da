@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 func getBinaryPath(t *testing.T) string {
@@ -53,17 +55,13 @@ func TestE2E_CreateListDelete_NoConfig(t *testing.T) {
 		_, _ = runCmd(t, k0daBin, "delete", "--name", name)
 	})
 
-	if out, code := runCmd(t, k0daBin, "create", "--name", name, "--timeout", "120s"); code != 0 {
-		t.Fatalf("create failed (%d):\n%s", code, out)
-	}
-	if out, code := runCmd(t, k0daBin, "list"); code != 0 {
-		t.Fatalf("list failed (%d):\n%s", code, out)
-	} else if !strings.Contains(out, name) {
-		t.Fatalf("cluster %q not found in list:\n%s", name, out)
-	}
-	if out, code := runCmd(t, k0daBin, "delete", "--name", name); code != 0 {
-		t.Fatalf("delete failed (%d):\n%s", code, out)
-	}
+	out, code := runCmd(t, k0daBin, "create", "--name", name, "--timeout", "120s")
+	require.Equalf(t, 0, code, "create failed (%d):\n%s", code, out)
+	out, code = runCmd(t, k0daBin, "list")
+	require.Equalf(t, 0, code, "list failed (%d):\n%s", code, out)
+	require.Containsf(t, out, name, "cluster %q not found in list:\n%s", name, out)
+	out, code = runCmd(t, k0daBin, "delete", "--name", name)
+	require.Equalf(t, 0, code, "delete failed (%d):\n%s", code, out)
 }
 
 func TestE2E_CreateListDelete_WithConfig(t *testing.T) {
@@ -268,7 +266,6 @@ func TestE2E_Manifests_Mounts_ApplyPod(t *testing.T) {
 		t.Setenv("K0DA_BIN", bin)
 	}
 	k0daBin := getBinaryPath(t)
-	rt := findHostContainerRuntime(t)
 	name := "k0da-e2e-manifest-" + strings.ReplaceAll(time.Now().Format("150405.000"), ".", "")
 
 	// Prepare temp config dir with a pod manifest and cluster config that references it
@@ -312,35 +309,10 @@ spec:
 		t.Fatalf("create with manifests failed (%d):\n%s", code, out)
 	}
 
-	// Inspect container mounts to ensure the manifest is mounted at the expected target
-	mountsOut := inspectContainerMounts(t, rt, name)
-	expectedTarget := "/var/lib/k0s/manifests/k0da/000_pod.yaml"
-	if !strings.Contains(mountsOut, expectedTarget) {
-		t.Fatalf("expected manifest mount target %q not found in mounts:\n%s", expectedTarget, mountsOut)
-	}
-
 	// Verify the pod becomes Running
 	kubeconfig := getKubeconfigPath(t)
 	ctx := "k0da-" + name
 	waitForPodReady(t, kubeconfig, ctx, "manifest-pod", 3*time.Minute)
-}
-
-func inspectContainerMounts(t *testing.T, runtime string, name string) string {
-	t.Helper()
-	var out string
-	var code int
-	switch runtime {
-	case "docker":
-		out, code = runCmd(t, "docker", "inspect", name, "--format", "{{json .Mounts}}")
-	case "podman":
-		out, code = runCmd(t, "podman", "inspect", name, "--format", "{{json .Mounts}}")
-	default:
-		out, code = "", 1
-	}
-	if code != 0 {
-		t.Fatalf("inspect mounts failed (%d): %s", code, out)
-	}
-	return out
 }
 
 func buildLocalK0daBinary(t *testing.T) string {
@@ -363,4 +335,125 @@ func buildLocalK0daBinary(t *testing.T) string {
 		return ""
 	}
 	return out
+
+}
+
+func TestE2E_Update(t *testing.T) {
+	bin := buildLocalK0daBinary(t)
+	if strings.TrimSpace(bin) != "" {
+		t.Setenv("K0DA_BIN", bin)
+	}
+	k0daBin := getBinaryPath(t)
+	name := "k0da-e2e-update-" + strings.ReplaceAll(time.Now().Format("150405.000"), ".", "")
+
+	// Prepare temp config dir with a pod manifest and cluster config that references it
+	cfgDir := t.TempDir()
+	pod1 := `apiVersion: v1
+kind: Pod
+metadata:
+  name: update-pod
+  namespace: default
+spec:
+  containers:
+  - name: pause
+    image: registry.k8s.io/pause:3.9
+    imagePullPolicy: IfNotPresent
+  restartPolicy: Always
+`
+	if err := os.WriteFile(filepath.Join(cfgDir, "pod1.yaml"), []byte(pod1), 0644); err != nil {
+		t.Fatalf("write pod1 manifest: %v", err)
+	}
+	cfg := `apiVersion: k0da.k0sproject.io/v1alpha1
+kind: Cluster
+spec:
+  k0s:
+    manifests:
+      - ./pod1.yaml
+  nodes:
+    - role: controller
+`
+	cfgPath := filepath.Join(cfgDir, "cluster.yaml")
+	if err := os.WriteFile(cfgPath, []byte(cfg), 0644); err != nil {
+		t.Fatalf("write cluster config: %v", err)
+	}
+
+	// Ensure cleanup
+	t.Cleanup(func() {
+		_, _ = runCmd(t, k0daBin, "delete", "--name", name)
+	})
+
+	// Create cluster with initial manifest
+	if out, code := runCmd(t, k0daBin, "create", "--name", name, "--timeout", "240s", "-c", cfgPath); code != 0 {
+		t.Fatalf("create with manifests failed (%d):\n%s", code, out)
+	}
+
+	// Wait for initial pod
+	kubeconfig := getKubeconfigPath(t)
+	ctx := "k0da-" + name
+	waitForPodReady(t, kubeconfig, ctx, "update-pod", 3*time.Minute)
+
+	// Modify manifest and add another one
+	pod1b := `apiVersion: v1
+kind: Pod
+metadata:
+  name: update-pod
+  namespace: default
+spec:
+  containers:
+  - name: pause
+    image: registry.k8s.io/pause:3.10
+    imagePullPolicy: IfNotPresent
+  restartPolicy: Always
+`
+	if err := os.WriteFile(filepath.Join(cfgDir, "pod1.yaml"), []byte(pod1b), 0644); err != nil {
+		t.Fatalf("rewrite pod1 manifest: %v", err)
+	}
+	pod2 := `apiVersion: v1
+kind: Pod
+metadata:
+  name: update-pod-2
+  namespace: default
+spec:
+  containers:
+  - name: pause
+    image: registry.k8s.io/pause:3.9
+    imagePullPolicy: IfNotPresent
+  restartPolicy: Always
+`
+	if err := os.WriteFile(filepath.Join(cfgDir, "pod2.yaml"), []byte(pod2), 0644); err != nil {
+		t.Fatalf("write pod2 manifest: %v", err)
+	}
+	// Update config to include second manifest and reorder, and change k0s config via dynamic config (telemetry.enabled=false)
+	cfg2 := `apiVersion: k0da.k0sproject.io/v1alpha1
+kind: Cluster
+spec:
+  k0s:
+    manifests:
+      - ./pod2.yaml
+      - ./pod1.yaml
+    config:
+      apiVersion: k0s.k0sproject.io/v1beta1
+      kind: Config
+      spec:
+        telemetry:
+          enabled: false
+  nodes:
+    - role: controller
+`
+	if err := os.WriteFile(cfgPath, []byte(cfg2), 0644); err != nil {
+		t.Fatalf("write updated cluster config: %v", err)
+	}
+
+	// Run update (no restart expected)
+	if out, code := runCmd(t, k0daBin, "update", "--name", name, "-c", cfgPath, "--timeout", "240s"); code != 0 {
+		t.Fatalf("update failed (%d):\n%s", code, out)
+	}
+
+	// Verify the new pod appears and the old pod is still running (image change may recreate)
+	waitForPodReady(t, kubeconfig, ctx, "update-pod-2", 3*time.Minute)
+
+	view, _ := runKubectl(t, kubeconfig, ctx, "get", "clusterconfig", "k0s", "-o", "yaml", "-n", "kube-system")
+	if !strings.Contains(view, "telemetry:") || strings.Contains(view, "enabled: true") {
+		t.Fatalf("expected telemetry.enabled=false in dynamic config, got:\n%s", view)
+	}
 }

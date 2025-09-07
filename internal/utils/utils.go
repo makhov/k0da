@@ -3,6 +3,8 @@ package utils
 import (
 	"context"
 	"fmt"
+	k0daconfig "github.com/makhov/k0da/internal/config"
+	"io/fs"
 	"net"
 	"os"
 	"path/filepath"
@@ -166,6 +168,71 @@ func SaveKubeconfig(kubeconfig *Kubeconfig, filePath string) error {
 		return fmt.Errorf("failed to write kubeconfig: %w", err)
 	}
 
+	return nil
+}
+
+// CopyManifestsToDir copies provided manifest file paths into destination directory.
+// Paths are resolved relative to baseDir when not absolute. Files are written
+// into destDir with a numeric prefix to preserve ordering when provided.
+func CopyManifestsToDir(cc *k0daconfig.ClusterConfig, destDir string) error {
+	if cc == nil || len(cc.Spec.K0s.Manifests) == 0 {
+		return nil
+	}
+	if err := os.MkdirAll(destDir, 0755); err != nil {
+		return fmt.Errorf("failed to create manifests directory: %w", err)
+	}
+	if err := RemoveAllFiles(destDir); err != nil {
+		return fmt.Errorf("failed to clean manifests dir: %w", err)
+	}
+
+	baseDir := ""
+	if strings.TrimSpace(cc.SourcePath) != "" {
+		baseDir = filepath.Dir(cc.SourcePath)
+	}
+
+	return copyManifestsToDir(cc.Spec.K0s.Manifests, baseDir, destDir)
+}
+
+func copyManifestsToDir(paths []string, baseDir string, destDir string) error {
+	for i, mp := range paths {
+		p := strings.TrimSpace(mp)
+		if p == "" {
+			continue
+		}
+		abs := p
+		if !filepath.IsAbs(p) && strings.TrimSpace(baseDir) != "" {
+			abs = filepath.Join(baseDir, p)
+		}
+		data, err := os.ReadFile(abs)
+		if err != nil {
+			return fmt.Errorf("failed to read manifest %q: %w", p, err)
+		}
+		// Prefix with index to keep deterministic order
+		dst := filepath.Join(destDir, fmt.Sprintf("%03d_%s", i, filepath.Base(abs)))
+		if err := os.WriteFile(dst, data, 0644); err != nil {
+			return fmt.Errorf("failed to write manifest to %q: %w", dst, err)
+		}
+	}
+	return nil
+}
+
+// RemoveAllFiles removes all regular files in the given directory (non-recursive).
+func RemoveAllFiles(dir string) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	for _, e := range entries {
+		if e.Type().IsRegular() || (e.Type() == fs.ModeSymlink) {
+			_ = os.Remove(filepath.Join(dir, e.Name()))
+			continue
+		}
+		// Also remove nested files if any leftover directories exist
+		_ = os.RemoveAll(filepath.Join(dir, e.Name()))
+	}
 	return nil
 }
 

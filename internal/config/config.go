@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/imdario/mergo"
 	"gopkg.in/yaml.v3"
@@ -139,6 +140,13 @@ func (c *ClusterConfig) MaybeWriteInlineK0sConfig(dir string) (string, error) {
 	return p, nil
 }
 
+func (c *ClusterConfig) ClusterDir(clusterName string) string {
+	return filepath.Join(os.Getenv("HOME"), ".k0da", "clusters", clusterName)
+}
+func (c *ClusterConfig) ManifestDir(clusterName string) string {
+	return filepath.Join(os.Getenv("HOME"), ".k0da", "clusters", clusterName, "manifests")
+}
+
 // EffectiveImage returns the k0s image to use based on precedence:
 // 1) explicit image
 // 2) DefaultK0sImageRepo + ":" + version
@@ -157,37 +165,10 @@ func (k K0sSpec) EffectiveImage() string {
 func DefaultK0sConfig() map[string]any {
 	return map[string]any{
 		"apiVersion": "k0s.k0sproject.io/v1beta1",
-		"kind":       "Cluster",
+		"kind":       "ClusterConfig",
+		"metadata":   map[string]string{"name": "k0s", "namespace": "kube-system"},
 		"spec":       map[string]any{},
 	}
-}
-
-// deepMergeMaps merges override into base (recursively for nested maps). Arrays/slices and scalars are replaced.
-func deepMergeMaps(base, override map[string]any) map[string]any {
-	if base == nil && override == nil {
-		return map[string]any{}
-	}
-	// clone base
-	out := map[string]any{}
-	for k, v := range base {
-		out[k] = v
-	}
-	for k, v := range override {
-		if mv, ok := v.(map[string]any); ok {
-			if existing, ok2 := out[k].(map[string]any); ok2 {
-				out[k] = deepMergeMaps(existing, mv)
-			} else {
-				clone := map[string]any{}
-				for ck, cv := range mv {
-					clone[ck] = cv
-				}
-				out[k] = clone
-			}
-			continue
-		}
-		out[k] = v
-	}
-	return out
 }
 
 // EffectiveK0sConfig returns the merged k0s config: defaults overlaid with user-specified values.
@@ -197,10 +178,16 @@ func (c *ClusterConfig) EffectiveK0sConfig() map[string]any {
 		return base
 	}
 	// Merge user config into defaults; user values override defaults
-	if err := mergo.Merge(&base, c.Spec.K0s.Config, mergo.WithOverride); err != nil {
-		// Fallback to internal deep merge on error
-		return deepMergeMaps(base, c.Spec.K0s.Config)
+	spec, ok := c.Spec.K0s.Config["spec"]
+	if !ok {
+		return base
 	}
+	baseSpec := base["spec"].(map[string]any)
+	if err := mergo.Merge(&baseSpec, spec.(map[string]any), mergo.WithOverride); err != nil {
+		// Fallback to internal deep merge on error
+		panic(fmt.Errorf("merge k0s config: %w", err))
+	}
+	base["spec"] = baseSpec
 	return base
 }
 
