@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/imdario/mergo"
 	"gopkg.in/yaml.v3"
 )
 
@@ -19,6 +20,8 @@ type ClusterConfig struct {
 	APIVersion string `yaml:"apiVersion"`
 	Kind       string `yaml:"kind"`
 	Spec       Spec   `yaml:"spec"`
+	// SourcePath is the filesystem path of the loaded config file (not serialized)
+	SourcePath string `yaml:"-"`
 }
 
 type Spec struct {
@@ -57,10 +60,11 @@ type Mount struct {
 }
 
 type K0sSpec struct {
-	Image   string         `yaml:"image,omitempty"`
-	Version string         `yaml:"version,omitempty"`
-	Config  map[string]any `yaml:"config,omitempty"`
-	Args    []string       `yaml:"args,omitempty"`
+	Image     string         `yaml:"image,omitempty"`
+	Version   string         `yaml:"version,omitempty"`
+	Config    map[string]any `yaml:"config,omitempty"`
+	Args      []string       `yaml:"args,omitempty"`
+	Manifests []string       `yaml:"manifests,omitempty"`
 }
 
 func LoadClusterConfig(path string) (*ClusterConfig, error) {
@@ -72,6 +76,8 @@ func LoadClusterConfig(path string) (*ClusterConfig, error) {
 	if err := yaml.Unmarshal(data, &c); err != nil {
 		return nil, fmt.Errorf("parse cluster config: %w", err)
 	}
+	// Remember the source path for resolving relative references (e.g., manifests)
+	c.SourcePath = path
 	return &c, nil
 }
 
@@ -145,4 +151,71 @@ func (k K0sSpec) EffectiveImage() string {
 		return DefaultK0sImageRepo + ":" + k.Version
 	}
 	return DefaultK0sImageRepo + ":" + DefaultK0sVersion
+}
+
+// DefaultK0sConfig returns a minimal default k0s cluster configuration.
+func DefaultK0sConfig() map[string]any {
+	return map[string]any{
+		"apiVersion": "k0s.k0sproject.io/v1beta1",
+		"kind":       "Cluster",
+		"spec":       map[string]any{},
+	}
+}
+
+// deepMergeMaps merges override into base (recursively for nested maps). Arrays/slices and scalars are replaced.
+func deepMergeMaps(base, override map[string]any) map[string]any {
+	if base == nil && override == nil {
+		return map[string]any{}
+	}
+	// clone base
+	out := map[string]any{}
+	for k, v := range base {
+		out[k] = v
+	}
+	for k, v := range override {
+		if mv, ok := v.(map[string]any); ok {
+			if existing, ok2 := out[k].(map[string]any); ok2 {
+				out[k] = deepMergeMaps(existing, mv)
+			} else {
+				clone := map[string]any{}
+				for ck, cv := range mv {
+					clone[ck] = cv
+				}
+				out[k] = clone
+			}
+			continue
+		}
+		out[k] = v
+	}
+	return out
+}
+
+// EffectiveK0sConfig returns the merged k0s config: defaults overlaid with user-specified values.
+func (c *ClusterConfig) EffectiveK0sConfig() map[string]any {
+	base := DefaultK0sConfig()
+	if c == nil || len(c.Spec.K0s.Config) == 0 {
+		return base
+	}
+	// Merge user config into defaults; user values override defaults
+	if err := mergo.Merge(&base, c.Spec.K0s.Config, mergo.WithOverride); err != nil {
+		// Fallback to internal deep merge on error
+		return deepMergeMaps(base, c.Spec.K0s.Config)
+	}
+	return base
+}
+
+// WriteEffectiveK0sConfig writes the effective k0s config (defaults merged with inline user config) to dir.
+func (c *ClusterConfig) WriteEffectiveK0sConfig(dir string) (string, error) {
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return "", fmt.Errorf("create dir: %w", err)
+	}
+	data, err := yaml.Marshal(c.EffectiveK0sConfig())
+	if err != nil {
+		return "", fmt.Errorf("marshal k0s config: %w", err)
+	}
+	p := dir + "/k0s.yaml"
+	if err := os.WriteFile(p, data, 0644); err != nil {
+		return "", fmt.Errorf("write k0s config: %w", err)
+	}
+	return p, nil
 }

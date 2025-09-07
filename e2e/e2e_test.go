@@ -260,3 +260,107 @@ func TestE2E_LoadImage_RunPod(t *testing.T) {
 	}
 	waitForPodReady(t, kubeconfig, ctx, podName, 2*time.Minute)
 }
+
+func TestE2E_Manifests_Mounts_ApplyPod(t *testing.T) {
+	bin := buildLocalK0daBinary(t)
+	if strings.TrimSpace(bin) != "" {
+		// Prefer local binary for this test run
+		t.Setenv("K0DA_BIN", bin)
+	}
+	k0daBin := getBinaryPath(t)
+	rt := findHostContainerRuntime(t)
+	name := "k0da-e2e-manifest-" + strings.ReplaceAll(time.Now().Format("150405.000"), ".", "")
+
+	// Prepare temp config dir with a pod manifest and cluster config that references it
+	cfgDir := t.TempDir()
+	podManifest := `apiVersion: v1
+kind: Pod
+metadata:
+  name: manifest-pod
+  namespace: default
+spec:
+  containers:
+  - name: pause
+    image: registry.k8s.io/pause:3.9
+    imagePullPolicy: IfNotPresent
+  restartPolicy: Always
+`
+	if err := os.WriteFile(filepath.Join(cfgDir, "pod.yaml"), []byte(podManifest), 0644); err != nil {
+		t.Fatalf("write pod manifest: %v", err)
+	}
+	cfg := `apiVersion: k0da.k0sproject.io/v1alpha1
+kind: Cluster
+spec:
+  k0s:
+    manifests:
+      - ./pod.yaml
+  nodes:
+    - role: controller
+`
+	cfgPath := filepath.Join(cfgDir, "cluster.yaml")
+	if err := os.WriteFile(cfgPath, []byte(cfg), 0644); err != nil {
+		t.Fatalf("write cluster config: %v", err)
+	}
+
+	// Ensure cleanup
+	t.Cleanup(func() {
+		_, _ = runCmd(t, k0daBin, "delete", "--name", name)
+	})
+
+	// Create cluster with manifests mounted
+	if out, code := runCmd(t, k0daBin, "create", "--name", name, "--timeout", "240s", "-c", cfgPath); code != 0 {
+		t.Fatalf("create with manifests failed (%d):\n%s", code, out)
+	}
+
+	// Inspect container mounts to ensure the manifest is mounted at the expected target
+	mountsOut := inspectContainerMounts(t, rt, name)
+	expectedTarget := "/var/lib/k0s/manifests/k0da/000_pod.yaml"
+	if !strings.Contains(mountsOut, expectedTarget) {
+		t.Fatalf("expected manifest mount target %q not found in mounts:\n%s", expectedTarget, mountsOut)
+	}
+
+	// Verify the pod becomes Running
+	kubeconfig := getKubeconfigPath(t)
+	ctx := "k0da-" + name
+	waitForPodReady(t, kubeconfig, ctx, "manifest-pod", 3*time.Minute)
+}
+
+func inspectContainerMounts(t *testing.T, runtime string, name string) string {
+	t.Helper()
+	var out string
+	var code int
+	switch runtime {
+	case "docker":
+		out, code = runCmd(t, "docker", "inspect", name, "--format", "{{json .Mounts}}")
+	case "podman":
+		out, code = runCmd(t, "podman", "inspect", name, "--format", "{{json .Mounts}}")
+	default:
+		out, code = "", 1
+	}
+	if code != 0 {
+		t.Fatalf("inspect mounts failed (%d): %s", code, out)
+	}
+	return out
+}
+
+func buildLocalK0daBinary(t *testing.T) string {
+	t.Helper()
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Skipf("cannot get working dir: %v", err)
+		return ""
+	}
+	repoRoot := filepath.Clean(filepath.Join(wd, ".."))
+	out := filepath.Join(repoRoot, "build", "k0da-e2e")
+	if err := os.MkdirAll(filepath.Dir(out), 0755); err != nil {
+		t.Skipf("cannot create build dir: %v", err)
+		return ""
+	}
+	cmd := exec.Command("go", "build", "-o", out, ".")
+	cmd.Dir = repoRoot
+	if b, err := cmd.CombinedOutput(); err != nil {
+		t.Skipf("building k0da failed: %v\n%s", err, string(b))
+		return ""
+	}
+	return out
+}

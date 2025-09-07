@@ -3,9 +3,13 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
+
+	"github.com/spf13/cobra"
+
 	"github.com/makhov/k0da/internal/runtime"
 	"github.com/makhov/k0da/internal/utils"
-	"github.com/spf13/cobra"
 )
 
 // deleteCmd represents the delete command
@@ -100,6 +104,14 @@ func runDelete(cmd *cobra.Command, args []string) error {
 	// Remove cluster from unified kubeconfig
 	if err := utils.RemoveClusterFromKubeconfig(clusterName); err != nil {
 		fmt.Printf("Warning: failed to remove cluster from kubeconfig: %v\n", err)
+	}
+
+	// Remove cluster working directory under $HOME/.k0da/clusters/<name>
+	if home, err := os.UserHomeDir(); err == nil {
+		dir := filepath.Join(home, ".k0da", "clusters", clusterName)
+		if err := os.RemoveAll(dir); err != nil {
+			fmt.Printf("Warning: failed to remove cluster directory %s: %v\n", dir, err)
+		}
 	}
 
 	fmt.Printf("✅ Cluster '%s' deleted successfully!\n", clusterName)

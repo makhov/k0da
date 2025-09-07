@@ -76,12 +76,13 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to create cluster directory: %w", err)
 	}
 
-	// If inline k0s config is present in the cluster config and no explicit file path was given,
-	// write it under the cluster directory and use it. Mount into /etc/k0s in the node.
+	// Write effective k0s config (defaults merged with inline user config) under the cluster directory and use it.
 	var k0daConfigPath string
 	if cc != nil {
 		cfgDir := filepath.Join(clusterDir, "etc-k0s")
-		if p, err := cc.MaybeWriteInlineK0sConfig(cfgDir); err == nil && p != "" {
+		if p, err := cc.WriteEffectiveK0sConfig(cfgDir); err != nil {
+			return fmt.Errorf("failed to write effective k0s config: %w", err)
+		} else if p != "" {
 			k0daConfigPath = p
 		}
 	}
@@ -106,7 +107,7 @@ func createK0sCluster(ctx context.Context, b runtime.Runtime, name, image string
 
 	// Build command args
 	cmdArgs := []string{"k0s", "controller", "--enable-worker", "--no-taints"}
-	if strings.TrimSpace(k0sConfigHostPath) != "" {
+	if strings.TrimSpace(k0sConfigHostPath) != "" || (cc != nil && len(cc.Spec.K0s.Config) > 0) {
 		cmdArgs = append(cmdArgs, "--config", "/etc/k0s/k0s.yaml")
 	}
 	// Global extra k0s args
@@ -114,12 +115,29 @@ func createK0sCluster(ctx context.Context, b runtime.Runtime, name, image string
 		cmdArgs = append(cmdArgs, cc.Spec.K0s.Args...)
 	}
 
+	// Ensure manifests directory exists on host for k0s manifests and copy manifests into it
+	hostK0daManifestsPath := filepath.Join(os.Getenv("HOME"), ".k0da", "clusters", name, "manifests")
+	if err := os.MkdirAll(hostK0daManifestsPath, 0755); err != nil {
+		return fmt.Errorf("failed to create manifests directory: %w", err)
+	}
+	if cc != nil && len(cc.Spec.K0s.Manifests) > 0 {
+		baseDir := ""
+		if strings.TrimSpace(cc.SourcePath) != "" {
+			baseDir = filepath.Dir(cc.SourcePath)
+		}
+		if err := copyManifestsToDir(cc.Spec.K0s.Manifests, baseDir, hostK0daManifestsPath); err != nil {
+			return fmt.Errorf("failed to stage manifests: %w", err)
+		}
+	}
+
 	// Build mounts
 	mounts := runtime.Mounts{
 		{Type: "volume", Source: fmt.Sprintf("%s", volumeName), Target: "/var"},
 		{Type: "bind", Source: "/lib/modules", Target: "/lib/modules", Options: []string{"ro"}},
 	}
-	if strings.TrimSpace(k0sConfigHostPath) != "" {
+	// Mount manifests directory into k0s manifests path
+	mounts = append(mounts, runtime.Mount{Type: "bind", Source: hostK0daManifestsPath, Target: "/var/lib/k0s/manifests/k0da"})
+	if strings.TrimSpace(k0sConfigHostPath) != "" || (cc != nil && len(cc.Spec.K0s.Config) > 0) {
 		// Mount only the k0s.yaml file as read-only, leaving /etc/k0s writable
 		mounts = append(mounts, runtime.Mount{Type: "bind", Source: k0sConfigHostPath, Target: "/etc/k0s/k0s.yaml", Options: []string{"ro"}})
 	}
@@ -213,6 +231,9 @@ func createK0sCluster(ctx context.Context, b runtime.Runtime, name, image string
 		return fmt.Errorf("failed to ensure network: %w", err)
 	}
 
+	// Tmpfs mounts: always mount /run and /var/run
+	tmpfs := map[string]string{"/run": "", "/var/run": ""}
+
 	_, err := b.RunContainer(ctx, runtime.RunContainerOptions{
 		Name:        containerName,
 		Hostname:    hostname,
@@ -221,7 +242,7 @@ func createK0sCluster(ctx context.Context, b runtime.Runtime, name, image string
 		Env:         env,
 		Labels:      labels,
 		Mounts:      mounts,
-		Tmpfs:       map[string]string{"/run": "", "/var/run": ""},
+		Tmpfs:       tmpfs,
 		SecurityOpt: []string{"seccomp=unconfined", "apparmor=unconfined", "label=disable"},
 		Privileged:  true,
 		//AutoRemove:  true,
@@ -248,5 +269,31 @@ func createK0sCluster(ctx context.Context, b runtime.Runtime, name, image string
 		}
 	}
 
+	return nil
+}
+
+// copyManifestsToDir copies provided manifest file paths into destination directory.
+// Paths are resolved relative to baseDir when not absolute. Files are written
+// into destDir with a numeric prefix to preserve ordering when provided.
+func copyManifestsToDir(paths []string, baseDir string, destDir string) error {
+	for i, mp := range paths {
+		p := strings.TrimSpace(mp)
+		if p == "" {
+			continue
+		}
+		abs := p
+		if !filepath.IsAbs(p) && strings.TrimSpace(baseDir) != "" {
+			abs = filepath.Join(baseDir, p)
+		}
+		data, err := os.ReadFile(abs)
+		if err != nil {
+			return fmt.Errorf("failed to read manifest %q: %w", p, err)
+		}
+		// Prefix with index to keep deterministic order
+		dst := filepath.Join(destDir, fmt.Sprintf("%03d_%s", i, filepath.Base(abs)))
+		if err := os.WriteFile(dst, data, 0644); err != nil {
+			return fmt.Errorf("failed to write manifest to %q: %w", dst, err)
+		}
+	}
 	return nil
 }

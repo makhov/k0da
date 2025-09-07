@@ -58,7 +58,8 @@ Flags:
 
 ## Cluster config (k0da)
 
-- `spec.k0s.config` is a plain k0s configuration (exactly as k0s expects). If present, k0da writes it to the node as `/etc/k0s/k0s.yaml` and starts k0s with `--config /etc/k0s/k0s.yaml`.
+- `spec.k0s.config` is a plain k0s configuration (exactly as k0s expects). k0da merges your values onto a sensible default k0s config and writes the result to `/etc/k0s/k0s.yaml`, starting k0s with `--config /etc/k0s/k0s.yaml`.
+- `spec.k0s.manifests` is a list of YAML files (absolute or relative to the cluster config file) that are bind-mounted read-only into `/var/lib/k0s/manifests/k0da`. Files are mounted with a numeric prefix to preserve the list order (e.g. `000_file.yaml`, `001_other.yaml`).
 - You can also set extra k0s args in `spec.k0s.args`, and node-level `args`, `ports`, `mounts`, `env`, and `labels`.
 
 Example (`cluster.yaml`):
@@ -71,7 +72,7 @@ spec:
     # You can specify either image or version. If neither set, a default is used.
     version: v1.33.3-k0s.0
     args: ["--debug"]
-    # This is a plain k0s config. It will be written to /etc/k0s/k0s.yaml
+    # This is a plain k0s config. It is merged with defaults and written to /etc/k0s/k0s.yaml
     config:
       apiVersion: k0s.k0sproject.io/v1beta1
       kind: ClusterConfig
@@ -80,6 +81,10 @@ spec:
       spec:
         network:
           provider: calico
+    # Optional: additional Kubernetes manifests to apply via k0s manifests
+    manifests:
+      - ./manifests/00-namespace.yaml
+      - ./manifests/10-app.yaml
 
   nodes:
     - role: controller
@@ -113,6 +118,11 @@ Create the cluster from the file:
 ```bash
 k0da create -c ./cluster.yaml
 ```
+
+Notes:
+- Manifest paths may be absolute or relative to the config file location.
+- Manifests are mounted read-only into `/var/lib/k0s/manifests/k0da` and k0s processes them automatically.
+- Order is preserved by prefixing filenames with a zero-padded index.
 
 ## Image loading
 
