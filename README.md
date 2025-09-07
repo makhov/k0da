@@ -135,6 +135,34 @@ k0da load archive ./my-images.tar -n demo
 k0da load image docker.io/library/nginx:alpine -n demo
 ```
 
+## Update command
+
+Use `k0da update` to apply changes to manifests and k0s configuration without recreating the container.
+
+Example:
+
+```yaml
+# cluster.yaml
+apiVersion: k0da.k0sproject.io/v1alpha1
+kind: Cluster
+spec:
+  k0s:
+    config:
+      apiVersion: k0s.k0sproject.io/v1beta1
+      kind: ClusterConfig
+      spec:
+        telemetry:
+          enabled: false
+    manifests:
+      - ./manifests/00-namespace.yaml
+      - ./manifests/10-app.yaml
+```
+
+```bash
+# Apply updates (manifests and dynamic config)
+k0da update -n my-cluster -c ./cluster.yaml
+```
+
 ## Runtime selection
 
 By default k0da auto-detects Docker or Podman. You can override via env vars:
