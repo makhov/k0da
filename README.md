@@ -41,16 +41,43 @@ go build -o k0da
 
 ```bash
 # Create a cluster with defaults
-./k0da create
+$ k0da create
 
 # Create a named cluster
-./k0da create --name my-cluster
+$ k0da create --name my-cluster
 
 # List clusters
-./k0da list
+$ k0da list
 
 # Delete a cluster
-./k0da delete -n my-cluster
+$ k0da delete -n my-cluster
+
+$ k0da --help
+k0da is a CLI utility similar to kind but opinionated and based on k0s.
+It provides an easy way to create and manage lightweight Kubernetes clusters
+using k0s as the distribution.
+
+Usage:
+  k0da [command]
+
+Available Commands:
+  completion  Generate the autocompletion script for the specified shell
+  context     Switch to a different k0da cluster context
+  create      Create a new k0s cluster
+  delete      Delete a k0s cluster
+  help        Help about any command
+  list        List all k0da clusters
+  load        Load images into the k0s cluster
+  update      Update an existing k0s cluster
+  version     Print version information
+
+Flags:
+      --config string   config file (default is $HOME/.k0da.yaml)
+  -h, --help            help for k0da
+  -v, --version         version for k0da
+
+Use "k0da [command] --help" for more information about a command.
+
 ```
 
 ## Create command
