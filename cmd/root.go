@@ -19,7 +19,8 @@ var rootCmd = &cobra.Command{
 	Long: `k0da is a CLI utility similar to kind but opinionated and based on k0s.
 It provides an easy way to create and manage lightweight Kubernetes clusters
 using k0s as the distribution.`,
-	Version: "0.1.0",
+	Version:      Version,
+	SilenceUsage: true,
 }
 
 // Execute adds all child commands to the root command and sets flags appropriately.

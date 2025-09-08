@@ -106,7 +106,12 @@ func createK0sCluster(ctx context.Context, b runtime.Runtime, name, image string
 	fmt.Printf("Creating container '%s' with image '%s' using %s...\n", containerName, image, b.Name())
 
 	// Build command args
-	cmdArgs := []string{"k0s", "controller", "--enable-worker", "--no-taints", "--enable-dynamic-config"}
+	cmdArgs := []string{"k0s", "controller", "--no-taints", "--enable-dynamic-config"}
+	if cc != nil && len(cc.Spec.Nodes) == 1 {
+		cmdArgs = append(cmdArgs, "--single")
+	} else {
+		cmdArgs = append(cmdArgs, "--enable-worker")
+	}
 	if strings.TrimSpace(k0sConfigHostPath) != "" || (cc != nil && len(cc.Spec.K0s.Config) > 0) {
 		cmdArgs = append(cmdArgs, "--config", "/etc/k0s/k0s.yaml")
 	}

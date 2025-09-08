@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/makhov/k0da/internal/runtime"
+	"github.com/stretchr/testify/require"
 )
 
 // fakeRuntime implements runtime.Runtime for tests
@@ -62,9 +63,8 @@ func TestWaitForK0sReady_SucceedsImmediately(t *testing.T) {
 		execExitCode: 0,
 	}
 
-	if err := WaitForK0sReady(ctx, r, "test", "2s"); err != nil {
-		t.Fatalf("WaitForK0sReady returned error: %v", err)
-	}
+	err := WaitForK0sReady(ctx, r, "test", "2s")
+	require.NoError(t, err)
 }
 
 func TestAddAndRemoveClusterToUnifiedKubeconfig(t *testing.T) {
@@ -99,39 +99,23 @@ users:
 	}
 
 	ctx := context.Background()
-	if err := AddClusterToKubeconfig(ctx, r, "test", "test"); err != nil {
-		t.Fatalf("AddClusterToKubeconfig error: %v", err)
-	}
+	err := AddClusterToKubeconfig(ctx, r, "test", "test")
+	require.NoError(t, err)
 
 	home, _ := os.UserHomeDir()
 	path := filepath.Join(home, ".kube", "config")
 	kc, err := LoadKubeconfig(path)
-	if err != nil {
-		t.Fatalf("LoadKubeconfig error: %v", err)
-	}
+	require.NoError(t, err)
 
-	if kc.CurrentContext != "k0da-test" {
-		t.Fatalf("unexpected current context: %q", kc.CurrentContext)
-	}
-	if len(kc.Clusters) != 1 {
-		t.Fatalf("expected 1 cluster, got %d", len(kc.Clusters))
-	}
-	if kc.Clusters[0].Name != "k0da-test" {
-		t.Fatalf("unexpected cluster name: %q", kc.Clusters[0].Name)
-	}
-	if got := kc.Clusters[0].Cluster.Server; got != "https://127.0.0.1:52345" {
-		t.Fatalf("unexpected server url: %q", got)
-	}
-
+	require.Equal(t, "k0da-test", kc.CurrentContext)
+	require.Len(t, kc.Clusters, 1)
+	require.Equal(t, "k0da-test", kc.Clusters[0].Name)
+	require.Equal(t, "https://127.0.0.1:52345", kc.Clusters[0].Cluster.Server)
 }
 
 func TestGetContainerPort(t *testing.T) {
 	r := &fakeRuntime{portIP: "0.0.0.0", port: 60000}
 	port, err := GetContainerPort(context.Background(), r, "any")
-	if err != nil {
-		t.Fatalf("GetContainerPort error: %v", err)
-	}
-	if port != "60000" {
-		t.Fatalf("expected port '60000', got %q", port)
-	}
+	require.NoError(t, err)
+	require.Equal(t, "60000", port)
 }

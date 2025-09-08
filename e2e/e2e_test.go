@@ -18,6 +18,9 @@ func getBinaryPath(t *testing.T) string {
 	if p := os.Getenv("K0DA_BIN"); strings.TrimSpace(p) != "" {
 		return p
 	}
+	if _, err := os.Stat("./k0da"); err == nil {
+		return filepath.Join("./k0da")
+	}
 	if p, err := exec.LookPath("k0da"); err == nil {
 		return p
 	}
@@ -80,14 +83,11 @@ func TestE2E_CreateListDelete_WithConfig(t *testing.T) {
 		_, _ = runCmd(t, k0daBin, "delete", "--name", name)
 	})
 
-	if out, code := runCmd(t, k0daBin, "create", "-n", name, "-c", cfgPath); code != 0 {
-		t.Fatalf("create (with config) failed (%d):\n%s", code, out)
-	}
-	if out, code := runCmd(t, k0daBin, "list"); code != 0 {
-		t.Fatalf("list failed (%d):\n%s", code, out)
-	} else if !strings.Contains(out, name) {
-		t.Fatalf("cluster %q not found in list:\n%s", name, out)
-	}
+	out, code := runCmd(t, k0daBin, "create", "-n", name, "-c", cfgPath)
+	require.Equalf(t, 0, code, "create (with config) failed (%d):\n%s", code, out)
+	out, code = runCmd(t, k0daBin, "list")
+	require.Equalf(t, 0, code, "list failed (%d):\n%s", code, out)
+	require.Containsf(t, out, name, "cluster %q not found in list:\n%s", name, out)
 }
 
 var k0daConfig = `
@@ -213,20 +213,17 @@ func TestE2E_LoadArchive_RunPod(t *testing.T) {
 		_, _ = runCmd(t, k0daBin, "delete", "--name", name)
 	})
 
-	if out, code := runCmd(t, k0daBin, "create", "--name", name, "--timeout", "180s"); code != 0 {
-		t.Fatalf("create failed (%d):\n%s", code, out)
-	}
-	if out, code := runCmd(t, k0daBin, "load", "archive", tar, "-n", name); code != 0 {
-		t.Fatalf("load archive failed (%d):\n%s", code, out)
-	}
+	out, code := runCmd(t, k0daBin, "create", "--name", name, "--timeout", "180s")
+	require.Equalf(t, 0, code, "create failed (%d):\n%s", code, out)
+	out, code = runCmd(t, k0daBin, "load", "archive", tar, "-n", name)
+	require.Equalf(t, 0, code, "load archive failed (%d):\n%s", code, out)
 
 	kubeconfig := getKubeconfigPath(t)
 	ctx := "k0da-" + name
 	podName := "arch-pod"
 	// kubectl run to create a Pod running our image
-	if out, code := runKubectl(t, kubeconfig, ctx, "run", podName, "--image="+image, "--restart=Never", "--", "sh", "-c", "sleep 3600"); code != 0 {
-		t.Fatalf("kubectl run failed (%d):\n%s", code, out)
-	}
+	out, code = runKubectl(t, kubeconfig, ctx, "run", podName, "--image="+image, "--restart=Never", "--", "sh", "-c", "sleep 3600")
+	require.Equalf(t, 0, code, "kubectl run failed (%d):\n%s", code, out)
 	waitForPodReady(t, kubeconfig, ctx, podName, 2*time.Minute)
 }
 
@@ -242,29 +239,21 @@ func TestE2E_LoadImage_RunPod(t *testing.T) {
 		_, _ = runCmd(t, k0daBin, "delete", "--name", name)
 	})
 
-	if out, code := runCmd(t, k0daBin, "create", "--name", name, "--timeout", "180s"); code != 0 {
-		t.Fatalf("create failed (%d):\n%s", code, out)
-	}
-	if out, code := runCmd(t, k0daBin, "load", "image", image, "-n", name); code != 0 {
-		t.Fatalf("load image failed (%d):\n%s", code, out)
-	}
+	out, code := runCmd(t, k0daBin, "create", "--name", name, "--timeout", "180s")
+	require.Equalf(t, 0, code, "create failed (%d):\n%s", code, out)
+	out, code = runCmd(t, k0daBin, "load", "image", image, "-n", name)
+	require.Equalf(t, 0, code, "load image failed (%d):\n%s", code, out)
 
 	kubeconfig := getKubeconfigPath(t)
 	ctx := "k0da-" + name
 	podName := "img-pod"
 	// kubectl run to create a Pod running our image
-	if out, code := runKubectl(t, kubeconfig, ctx, "run", podName, "--image="+image, "--restart=Never", "--", "sh", "-c", "sleep 3600"); code != 0 {
-		t.Fatalf("kubectl run failed (%d):\n%s", code, out)
-	}
+	out, code = runKubectl(t, kubeconfig, ctx, "run", podName, "--image="+image, "--restart=Never", "--", "sh", "-c", "sleep 3600")
+	require.Equalf(t, 0, code, "kubectl run failed (%d):\n%s", code, out)
 	waitForPodReady(t, kubeconfig, ctx, podName, 2*time.Minute)
 }
 
 func TestE2E_Manifests_Mounts_ApplyPod(t *testing.T) {
-	bin := buildLocalK0daBinary(t)
-	if strings.TrimSpace(bin) != "" {
-		// Prefer local binary for this test run
-		t.Setenv("K0DA_BIN", bin)
-	}
 	k0daBin := getBinaryPath(t)
 	name := "k0da-e2e-manifest-" + strings.ReplaceAll(time.Now().Format("150405.000"), ".", "")
 
@@ -305,9 +294,8 @@ spec:
 	})
 
 	// Create cluster with manifests mounted
-	if out, code := runCmd(t, k0daBin, "create", "--name", name, "--timeout", "240s", "-c", cfgPath); code != 0 {
-		t.Fatalf("create with manifests failed (%d):\n%s", code, out)
-	}
+	out, code := runCmd(t, k0daBin, "create", "--name", name, "--timeout", "240s", "-c", cfgPath)
+	require.Equalf(t, 0, code, "create with manifests failed (%d):\n%s", code, out)
 
 	// Verify the pod becomes Running
 	kubeconfig := getKubeconfigPath(t)
@@ -315,34 +303,7 @@ spec:
 	waitForPodReady(t, kubeconfig, ctx, "manifest-pod", 3*time.Minute)
 }
 
-func buildLocalK0daBinary(t *testing.T) string {
-	t.Helper()
-	wd, err := os.Getwd()
-	if err != nil {
-		t.Skipf("cannot get working dir: %v", err)
-		return ""
-	}
-	repoRoot := filepath.Clean(filepath.Join(wd, ".."))
-	out := filepath.Join(repoRoot, "build", "k0da-e2e")
-	if err := os.MkdirAll(filepath.Dir(out), 0755); err != nil {
-		t.Skipf("cannot create build dir: %v", err)
-		return ""
-	}
-	cmd := exec.Command("go", "build", "-o", out, ".")
-	cmd.Dir = repoRoot
-	if b, err := cmd.CombinedOutput(); err != nil {
-		t.Skipf("building k0da failed: %v\n%s", err, string(b))
-		return ""
-	}
-	return out
-
-}
-
 func TestE2E_Update(t *testing.T) {
-	bin := buildLocalK0daBinary(t)
-	if strings.TrimSpace(bin) != "" {
-		t.Setenv("K0DA_BIN", bin)
-	}
 	k0daBin := getBinaryPath(t)
 	name := "k0da-e2e-update-" + strings.ReplaceAll(time.Now().Format("150405.000"), ".", "")
 
@@ -382,10 +343,9 @@ spec:
 		_, _ = runCmd(t, k0daBin, "delete", "--name", name)
 	})
 
-	// Create cluster with initial manifest
-	if out, code := runCmd(t, k0daBin, "create", "--name", name, "--timeout", "240s", "-c", cfgPath); code != 0 {
-		t.Fatalf("create with manifests failed (%d):\n%s", code, out)
-	}
+	t.Log("Creating cluster...")
+	out, code := runCmd(t, k0daBin, "create", "--name", name, "--timeout", "240s", "-c", cfgPath)
+	require.Equalf(t, 0, code, "create with manifests failed (%d):\n%s", code, out)
 
 	// Wait for initial pod
 	kubeconfig := getKubeconfigPath(t)
@@ -444,16 +404,16 @@ spec:
 		t.Fatalf("write updated cluster config: %v", err)
 	}
 
-	// Run update (no restart expected)
-	if out, code := runCmd(t, k0daBin, "update", "--name", name, "-c", cfgPath, "--timeout", "240s"); code != 0 {
-		t.Fatalf("update failed (%d):\n%s", code, out)
-	}
+	t.Log("Running update...")
+	out, code = runCmd(t, k0daBin, "update", "--name", name, "-c", cfgPath, "--timeout", "240s")
+	require.Equalf(t, 0, code, "update failed (%d):\n%s", code, out)
 
+	t.Log("Waiting for new pod...")
 	// Verify the new pod appears and the old pod is still running (image change may recreate)
 	waitForPodReady(t, kubeconfig, ctx, "update-pod-2", 3*time.Minute)
 
+	t.Log("Checking config...")
 	view, _ := runKubectl(t, kubeconfig, ctx, "get", "clusterconfig", "k0s", "-o", "yaml", "-n", "kube-system")
-	if !strings.Contains(view, "telemetry:") || strings.Contains(view, "enabled: true") {
-		t.Fatalf("expected telemetry.enabled=false in dynamic config, got:\n%s", view)
-	}
+	require.Contains(t, view, "telemetry:")
+	require.NotContains(t, view, "enabled: true")
 }
