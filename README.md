@@ -20,6 +20,16 @@ Tip (Podman on macOS): use a rootful machine (`podman machine set --rootful && p
 
 ## Install
 
+Download a pre-built binary from the latest [release](https://github.com/makhov/k0da/releases/latest).
+
+Or install the latest version with `go install`:
+
+```bash
+go install github.com/makhov/k0da@latest
+```
+
+## Install from source
+
 ```bash
 git clone https://github.com/makhov/k0da.git
 cd k0da
