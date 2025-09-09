@@ -11,9 +11,15 @@ import (
 
 const (
 	DefaultNetwork      = "k0da"
-	DefaultK0sVersion   = "v1.33.3-k0s.0"
 	DefaultK0sImageRepo = "quay.io/k0sproject/k0s"
 )
+
+// DefaultK0sVersion is the default k0s version tag used for images.
+// It is intentionally a var so it can be overridden via -ldflags at build time.
+// Example:
+//
+//	-X github.com/makhov/k0da/internal/config.DefaultK0sVersion=v1.33.4-k0s.0
+var DefaultK0sVersion = "v1.33.3-k0s.0"
 
 const (
 	LabelCluster     = "k0da.cluster"
@@ -76,26 +82,47 @@ type K0sSpec struct {
 	Manifests []string       `yaml:"manifests,omitempty"`
 }
 
+// LoadClusterConfig loads a cluster config from the given path.
+// If path is empty, returns a default config.
+// Always returns a valid config with validation applied.
 func LoadClusterConfig(path string) (*ClusterConfig, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("read cluster config: %w", err)
-	}
 	var c ClusterConfig
-	if err := yaml.Unmarshal(data, &c); err != nil {
-		return nil, fmt.Errorf("parse cluster config: %w", err)
+
+	if path != "" {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil, fmt.Errorf("read cluster config: %w", err)
+		}
+		if err := yaml.Unmarshal(data, &c); err != nil {
+			return nil, fmt.Errorf("parse cluster config: %w", err)
+		}
+		// Remember the source path for resolving relative references (e.g., manifests)
+		c.SourcePath = path
 	}
-	// Remember the source path for resolving relative references (e.g., manifests)
-	c.SourcePath = path
+
+	// Apply defaults and validate
+	if err := c.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid cluster config: %w", err)
+	}
+
 	return &c, nil
 }
 
 func (c *ClusterConfig) Validate() error {
+	// Set defaults for empty configs
+	if c.Kind == "" {
+		c.Kind = "Cluster"
+	}
+	if c.APIVersion == "" {
+		c.APIVersion = "k0da.k0sproject.io/v1alpha1"
+	}
+
+	// Validate kind
 	if c.Kind != "Cluster" {
 		return fmt.Errorf("unsupported kind: %q (expected Cluster)", c.Kind)
 	}
 	// apiVersion is informational for now; accept empty or v1alpha1
-	if c.APIVersion != "" && c.APIVersion != "k0da.k0sproject.io/v1alpha1" {
+	if c.APIVersion != "k0da.k0sproject.io/v1alpha1" {
 		return fmt.Errorf("unsupported apiVersion: %q", c.APIVersion)
 	}
 	if c.Spec.K0s.Image != "" && len(c.Spec.K0s.Image) < 3 {
@@ -161,12 +188,12 @@ func (c *ClusterConfig) ManifestDir(clusterName string) string {
 // 3) DefaultK0sImageRepo + ":" + DefaultK0sVersion
 func (k K0sSpec) EffectiveImage() string {
 	if k.Image != "" {
-		return k.Image
+		return NormalizeImageTag(k.Image)
 	}
 	if k.Version != "" {
-		return DefaultK0sImageRepo + ":" + k.Version
+		return DefaultK0sImageRepo + ":" + NormalizeVersionTag(k.Version)
 	}
-	return DefaultK0sImageRepo + ":" + DefaultK0sVersion
+	return DefaultK0sImageRepo + ":" + NormalizeVersionTag(DefaultK0sVersion)
 }
 
 // DefaultK0sConfig returns a minimal default k0s cluster configuration.

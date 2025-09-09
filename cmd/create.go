@@ -3,9 +3,11 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	k0daconfig "github.com/makhov/k0da/internal/config"
 	"github.com/makhov/k0da/internal/runtime"
@@ -38,26 +40,30 @@ func init() {
 	// Here you will define your flags and configuration settings.
 	createCmd.Flags().StringVarP(&name, "name", "n", DefaultClusterName, "name of the cluster to create")
 	createCmd.Flags().StringVarP(&clusterConfigPath, "config", "c", "", "cluster config file")
-	createCmd.Flags().StringVarP(&image, "image", "i", "quay.io/k0sproject/k0s:v1.33.3-k0s.0", "k0s image to use")
+	createCmd.Flags().StringVarP(&image, "image", "i", k0daconfig.DefaultK0sImageRepo+":"+k0daconfig.DefaultK0sVersion, "k0s image to use")
 	createCmd.Flags().BoolVarP(&wait, "wait", "w", true, "wait for cluster to be ready")
 	createCmd.Flags().StringVarP(&timeout, "timeout", "t", "60s", "timeout for cluster creation")
 }
 
 func runCreate(cmd *cobra.Command, args []string) error {
 	clusterName := name
-	var cc *k0daconfig.ClusterConfig
-	if strings.TrimSpace(clusterConfigPath) != "" {
-		var err error
-		cc, err = k0daconfig.LoadClusterConfig(clusterConfigPath)
-		if err != nil {
-			return fmt.Errorf("failed to load cluster config: %w", err)
-		}
-		if err := cc.Validate(); err != nil {
-			return fmt.Errorf("invalid cluster config: %w", err)
-		}
-		// If config specifies image or version, derive image accordingly.
-		if cc.Spec.K0s.Image != "" || cc.Spec.K0s.Version != "" {
-			image = cc.Spec.K0s.EffectiveImage()
+
+	// Load cluster config (always returns a valid config)
+	cc, err := k0daconfig.LoadClusterConfig(strings.TrimSpace(clusterConfigPath))
+	if err != nil {
+		return fmt.Errorf("failed to load cluster config: %w", err)
+	}
+
+	// Determine final image with precedence: config > user-flag override > fetched stable > default
+	var finalImage string
+	if cc.Spec.K0s.Image != "" || cc.Spec.K0s.Version != "" {
+		finalImage = cc.Spec.K0s.EffectiveImage()
+	} else {
+		client := &http.Client{Timeout: 3 * time.Second}
+		if stable, err := k0daconfig.FetchStableK0sVersion(client); err == nil && strings.TrimSpace(stable) != "" {
+			finalImage = k0daconfig.DefaultK0sImageRepo + ":" + k0daconfig.NormalizeVersionTag(stable)
+		} else {
+			finalImage = k0daconfig.DefaultK0sImageRepo + ":" + k0daconfig.DefaultK0sVersion
 		}
 	}
 
@@ -76,19 +82,19 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to create cluster directory: %w", err)
 	}
 
-	// Write effective k0s config (defaults merged with inline user config) under the cluster directory and use it.
+	// Always write effective k0s config (defaults merged with inline user config) for consistency
+	cfgDir := filepath.Join(clusterDir, "etc-k0s")
+	p, err := cc.WriteEffectiveK0sConfig(cfgDir)
+	if err != nil {
+		return fmt.Errorf("failed to write effective k0s config: %w", err)
+	}
 	var k0daConfigPath string
-	if cc != nil {
-		cfgDir := filepath.Join(clusterDir, "etc-k0s")
-		if p, err := cc.WriteEffectiveK0sConfig(cfgDir); err != nil {
-			return fmt.Errorf("failed to write effective k0s config: %w", err)
-		} else if p != "" {
-			k0daConfigPath = p
-		}
+	if p != "" {
+		k0daConfigPath = p
 	}
 
 	// Create the primary node/container using backend
-	if err := createK0sCluster(ctx, r, clusterName, image, wait, timeout, cc, k0daConfigPath); err != nil {
+	if err := createK0sCluster(ctx, r, clusterName, finalImage, wait, timeout, cc, k0daConfigPath); err != nil {
 		return fmt.Errorf("failed to create k0s cluster: %w", err)
 	}
 
@@ -114,16 +120,16 @@ func createK0sCluster(ctx context.Context, b runtime.Runtime, name, image string
 
 	// Build command args
 	cmdArgs := []string{"k0s", "controller", "--no-taints", "--enable-dynamic-config"}
-	if cc != nil && len(cc.Spec.Nodes) == 1 {
+	if len(cc.Spec.Nodes) == 1 {
 		cmdArgs = append(cmdArgs, "--single")
 	} else {
 		cmdArgs = append(cmdArgs, "--enable-worker")
 	}
-	if strings.TrimSpace(k0sConfigHostPath) != "" || (cc != nil && len(cc.Spec.K0s.Config) > 0) {
+	if strings.TrimSpace(k0sConfigHostPath) != "" {
 		cmdArgs = append(cmdArgs, "--config", "/etc/k0s/k0s.yaml")
 	}
 	// Global extra k0s args
-	if cc != nil && len(cc.Spec.K0s.Args) > 0 {
+	if len(cc.Spec.K0s.Args) > 0 {
 		cmdArgs = append(cmdArgs, cc.Spec.K0s.Args...)
 	}
 
@@ -140,16 +146,13 @@ func createK0sCluster(ctx context.Context, b runtime.Runtime, name, image string
 	}
 	// Mount manifests directory into k0s manifests path
 	mounts = append(mounts, runtime.Mount{Type: "bind", Source: hostK0daManifestsPath, Target: "/var/lib/k0s/manifests/k0da"})
-	if strings.TrimSpace(k0sConfigHostPath) != "" || (cc != nil && len(cc.Spec.K0s.Config) > 0) {
+	if strings.TrimSpace(k0sConfigHostPath) != "" {
 		// Mount only the k0s.yaml file as read-only, leaving /etc/k0s writable
 		mounts = append(mounts, runtime.Mount{Type: "bind", Source: k0sConfigHostPath, Target: "/etc/k0s/k0s.yaml", Options: []string{"ro"}})
 	}
 
 	// Node overrides/extensions
-	var node *k0daconfig.NodeSpec
-	if cc != nil {
-		node = cc.PickPrimaryNode()
-	}
+	node := cc.PickPrimaryNode()
 	if node != nil {
 		for _, m := range node.Mounts {
 			mounts = append(mounts, runtime.Mount{Type: m.Type, Source: m.Source, Target: m.Target, Options: m.Options})
@@ -170,10 +173,7 @@ func createK0sCluster(ctx context.Context, b runtime.Runtime, name, image string
 	}
 
 	// Ensure network exists and attach container to it (kind-like shared network)
-	networkName := k0daconfig.DefaultNetwork
-	if cc != nil {
-		networkName = cc.Spec.Options.Network
-	}
+	networkName := cc.Spec.Options.Network
 	if err := b.EnsureNetwork(ctx, networkName); err != nil {
 		return fmt.Errorf("failed to ensure network: %w", err)
 	}
@@ -214,32 +214,6 @@ func createK0sCluster(ctx context.Context, b runtime.Runtime, name, image string
 		}
 	}
 
-	return nil
-}
-
-// copyManifestsToDir copies provided manifest file paths into destination directory.
-// Paths are resolved relative to baseDir when not absolute. Files are written
-// into destDir with a numeric prefix to preserve ordering when provided.
-func copyManifestsToDir(paths []string, baseDir string, destDir string) error {
-	for i, mp := range paths {
-		p := strings.TrimSpace(mp)
-		if p == "" {
-			continue
-		}
-		abs := p
-		if !filepath.IsAbs(p) && strings.TrimSpace(baseDir) != "" {
-			abs = filepath.Join(baseDir, p)
-		}
-		data, err := os.ReadFile(abs)
-		if err != nil {
-			return fmt.Errorf("failed to read manifest %q: %w", p, err)
-		}
-		// Prefix with index to keep deterministic order
-		dst := filepath.Join(destDir, fmt.Sprintf("%03d_%s", i, filepath.Base(abs)))
-		if err := os.WriteFile(dst, data, 0644); err != nil {
-			return fmt.Errorf("failed to write manifest to %q: %w", dst, err)
-		}
-	}
 	return nil
 }
 
