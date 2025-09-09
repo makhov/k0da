@@ -69,25 +69,41 @@ func TestE2E_CreateListDelete_NoConfig(t *testing.T) {
 
 func TestE2E_CreateListDelete_WithConfig(t *testing.T) {
 	k0daBin := getBinaryPath(t)
-	name := "k0da-e2e-with-config-" + strings.ReplaceAll(time.Now().Format("150405.000"), ".", "")
+	name := "k0da-e2e-mn-" + strings.ReplaceAll(time.Now().Format("150405.000"), ".", "")
 
-	// Write minimal cluster config
+	// Multi-node config: 1 controller + 1 worker
 	cfgDir := t.TempDir()
 	cfgPath := filepath.Join(cfgDir, "cluster.yaml")
-	if err := os.WriteFile(cfgPath, []byte(k0daConfig), 0644); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+	cfgYAML := `apiVersion: k0da.k0sproject.io/v1alpha1
+kind: Cluster
+spec:
+  k0s:
+    version: v1.33.3-k0s.0
+  nodes:
+    - role: controller
+      name: ` + name + `
+    - role: worker
+      name: ` + name + `-w1
+`
+	require.NoError(t, os.WriteFile(cfgPath, []byte(cfgYAML), 0644))
 
 	// Ensure cleanup
 	t.Cleanup(func() {
 		_, _ = runCmd(t, k0daBin, "delete", "--name", name)
 	})
 
-	out, code := runCmd(t, k0daBin, "create", "-n", name, "-c", cfgPath)
-	require.Equalf(t, 0, code, "create (with config) failed (%d):\n%s", code, out)
+	// Create cluster
+	out, code := runCmd(t, k0daBin, "create", "-n", name, "-c", cfgPath, "--timeout", "240s")
+	require.Equalf(t, 0, code, "create (multi-node) failed (%d):\n%s", code, out)
+
+	// List should show a single cluster entry
 	out, code = runCmd(t, k0daBin, "list")
-	require.Equalf(t, 0, code, "list failed (%d):\n%s", code, out)
-	require.Containsf(t, out, name, "cluster %q not found in list:\n%s", name, out)
+	require.Equal(t, 0, code)
+	require.Contains(t, out, name)
+
+	// Delete cluster (should remove both nodes)
+	out, code = runCmd(t, k0daBin, "delete", "--name", name)
+	require.Equalf(t, 0, code, "delete failed (%d):\n%s", code, out)
 }
 
 var k0daConfig = `
@@ -399,6 +415,9 @@ spec:
           enabled: false
   nodes:
     - role: controller
+      name: ` + name + `
+    - role: worker
+      name: ` + name + `-w1
 `
 	if err := os.WriteFile(cfgPath, []byte(cfg2), 0644); err != nil {
 		t.Fatalf("write updated cluster config: %v", err)

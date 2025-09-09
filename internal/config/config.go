@@ -15,6 +15,14 @@ const (
 	DefaultK0sImageRepo = "quay.io/k0sproject/k0s"
 )
 
+const (
+	LabelCluster     = "k0da.cluster"
+	LabelClusterName = "k0da.cluster.name"
+	LabelClusterType = "k0da.cluster.type"
+	LabelNodeName    = "k0da.node.name"
+	LabelNodeRole    = "k0da.node.role"
+)
+
 // ClusterConfig is a kind-like local cluster config aligned with k0s family style.
 // Supports one or more nodes (we currently run single-node but keep structure future-proof).
 type ClusterConfig struct {

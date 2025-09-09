@@ -82,20 +82,36 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to create cluster directory: %w", err)
 	}
 
-	if err := utils.CopyManifestsToDir(cc, cc.ManifestDir(clusterName)); err != nil {
-		return fmt.Errorf("failed to stage manifests: %w", err)
+	// Stage manifests if defined (clean dir first to avoid stale files and ordering issues)
+	if cc != nil && len(cc.Spec.K0s.Manifests) > 0 {
+		manifestsDir := filepath.Join(clusterDir, "manifests")
+		if err := os.MkdirAll(manifestsDir, 0755); err != nil {
+			return fmt.Errorf("failed to create manifests dir: %w", err)
+		}
+		if err := utils.RemoveAllFiles(manifestsDir); err != nil {
+			return fmt.Errorf("failed to clean manifests dir: %w", err)
+		}
+		if err := utils.CopyManifestsToDir(cc, manifestsDir); err != nil {
+			return fmt.Errorf("failed to stage manifests: %w", err)
+		}
 	}
 
-	// Apply dynamic k0s config in-cluster if provided
+	// Apply dynamic k0s config in-cluster if provided, using the primary controller
 	if cc != nil {
 		etcDir := filepath.Join(clusterDir, "etc-k0s")
+		if err := os.MkdirAll(etcDir, 0755); err != nil {
+			return fmt.Errorf("failed to create etc-k0s dir: %w", err)
+		}
 		p, err := cc.WriteEffectiveK0sConfig(etcDir)
 		if err != nil {
 			return fmt.Errorf("failed to write effective k0s config: %w", err)
 		}
-		_ = p // mounted at /etc/k0s/k0s.yaml inside the container
-		if out, exit, err := r.ExecInContainer(ctx, clusterName, []string{"k0s", "kc", "apply", "-f", "/etc/k0s/k0s.yaml"}); err != nil || exit != 0 {
-			return fmt.Errorf("failed to apply dynamic config via k0s: %v, out: %s", err, out)
+		_ = p // mounted at /etc/k0s/k0s.yaml inside containers
+
+		// The primary node's container name equals the cluster name
+		primaryName := clusterName
+		if out, exit, err := r.ExecInContainer(ctx, primaryName, []string{"k0s", "kc", "apply", "-f", "/etc/k0s/k0s.yaml"}); err != nil || exit != 0 {
+			return fmt.Errorf("failed to apply dynamic config via k0s on primary '%s'. output: %s, error: %v", primaryName, out, err)
 		}
 	}
 
