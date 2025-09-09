@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	k0daconfig "github.com/makhov/k0da/internal/config"
 	"github.com/makhov/k0da/internal/runtime"
 	"github.com/makhov/k0da/internal/utils"
 )
@@ -53,51 +54,34 @@ func runDelete(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	containerName := clusterName
-	volumeName := fmt.Sprintf("%s-var", clusterName)
-
-	// Check if container exists or if volume exists (for cleanup of --rm containers)
-	exists, err := r.ContainerExists(ctx, containerName)
+	// Find all containers for this cluster and delete them
+	list, err := r.ListContainersByLabel(ctx, map[string]string{k0daconfig.LabelClusterName: clusterName}, true)
 	if err != nil {
 		return err
 	}
-	volExists, err := r.VolumeExists(ctx, volumeName)
-	if err != nil {
-		return err
+	if len(list) == 0 {
+		return fmt.Errorf("cluster '%s' not found", clusterName)
 	}
-
-	if !exists && !volExists {
-		return fmt.Errorf("cluster '%s' not found (no container or volume found)", clusterName)
-	}
-
-	// Handle container if it exists
-	if exists {
-		// Check if container is running
-		isRunning, err := r.ContainerIsRunning(ctx, containerName)
-		if err != nil {
-			return err
+	// Stop running containers first
+	for _, c := range list {
+		running, err := r.ContainerIsRunning(ctx, c.Name)
+		if err == nil && running {
+			fmt.Printf("Stopping node '%s'...\n", c.Name)
+			_ = r.StopContainer(ctx, c.Name)
 		}
-		if isRunning {
-			fmt.Printf("Stopping cluster '%s'...\n", clusterName)
-			if err := r.StopContainer(ctx, containerName); err != nil {
-				return fmt.Errorf("failed to stop container: %w", err)
+	}
+	for _, c := range list {
+		fmt.Printf("Deleting node '%s'...\n", c.Name)
+		if err := r.RemoveContainer(ctx, c.Name); err != nil {
+			fmt.Printf("Warning: failed to remove container %s: %v\n", c.Name, err)
+		}
+		// Remove its volume
+		volName := fmt.Sprintf("%s-var", c.Name)
+		if exists, _ := r.VolumeExists(ctx, volName); exists {
+			fmt.Printf("Removing volume '%s'...\n", volName)
+			if err := r.RemoveVolume(ctx, volName); err != nil {
+				fmt.Printf("Warning: failed to remove volume '%s': %v\n", volName, err)
 			}
-		}
-
-		// Remove container
-		fmt.Printf("Deleting cluster '%s'...\n", clusterName)
-		if err := r.RemoveContainer(ctx, containerName); err != nil {
-			return fmt.Errorf("failed to remove container: %w", err)
-		}
-	} else if volExists {
-		fmt.Printf("Container for cluster '%s' was already removed, cleaning up volume...\n", clusterName)
-	}
-
-	// Remove associated volume
-	if volExists {
-		fmt.Printf("Removing volume '%s'...\n", volumeName)
-		if err := r.RemoveVolume(ctx, volumeName); err != nil {
-			fmt.Printf("Warning: failed to remove volume '%s': %v\n", volumeName, err)
 		}
 	}
 

@@ -87,9 +87,16 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Create the cluster using backend
+	// Create the primary node/container using backend
 	if err := createK0sCluster(ctx, r, clusterName, image, wait, timeout, cc, k0daConfigPath); err != nil {
 		return fmt.Errorf("failed to create k0s cluster: %w", err)
+	}
+
+	// If multinode defined, join additional nodes to the primary
+	if cc != nil && len(cc.Spec.Nodes) > 1 {
+		if err := joinAdditionalNodes(ctx, r, clusterName, image, wait, timeout, cc); err != nil {
+			return fmt.Errorf("failed to join additional nodes: %w", err)
+		}
 	}
 
 	fmt.Printf("✅ Cluster '%s' created successfully!\n", clusterName)
@@ -138,8 +145,6 @@ func createK0sCluster(ctx context.Context, b runtime.Runtime, name, image string
 		mounts = append(mounts, runtime.Mount{Type: "bind", Source: k0sConfigHostPath, Target: "/etc/k0s/k0s.yaml", Options: []string{"ro"}})
 	}
 
-	// Docker socket mount is handled automatically by the Docker runtime when applicable
-
 	// Node overrides/extensions
 	var node *k0daconfig.NodeSpec
 	if cc != nil {
@@ -151,66 +156,12 @@ func createK0sCluster(ctx context.Context, b runtime.Runtime, name, image string
 		}
 	}
 
-	// Ports to publish: honor node ports, ensure 6443/tcp exists at least once
-	publish := []runtime.PortSpec{}
-	if node != nil && len(node.Ports) > 0 {
-		for _, p := range node.Ports {
-			proto := strings.ToLower(p.Protocol)
-			if proto == "" {
-				proto = "tcp"
-			}
-			publish = append(publish, runtime.PortSpec{ContainerPort: p.ContainerPort, Protocol: proto, HostIP: p.HostIP, HostPort: p.HostPort})
-		}
-	}
-	// Ensure API port mapping exists
-	hasAPI := false
-	for _, ps := range publish {
-		if ps.ContainerPort == 6443 && (ps.Protocol == "" || strings.ToLower(ps.Protocol) == "tcp") {
-			hasAPI = true
-			break
-		}
-	}
-	if !hasAPI {
-		publish = append(publish, runtime.PortSpec{ContainerPort: 6443, Protocol: "tcp"})
-	}
-	// Ensure API port is explicitly mapped to a fixed host port
-	// Locate API mapping entry
-	var apiPortIndex = -1
-	for i := range publish {
-		if publish[i].ContainerPort == 6443 && (publish[i].Protocol == "" || strings.ToLower(publish[i].Protocol) == "tcp") {
-			apiPortIndex = i
-			break
-		}
-	}
-	if apiPortIndex != -1 {
-		if publish[apiPortIndex].HostPort == 0 {
-			hostIP := publish[apiPortIndex].HostIP
-			if p, err := utils.AllocateHostPort(hostIP); err == nil && p > 0 {
-				publish[apiPortIndex].HostPort = p
-			}
-		}
-	}
-
-	// Env vars
-	var env runtime.EnvVars
-	if node != nil && len(node.Env) > 0 {
-		for k, v := range node.Env {
-			env = append(env, runtime.EnvVar{Name: k, Value: v})
-		}
-	}
-
-	// Labels
-	labels := map[string]string{"k0da.cluster": "true", "k0da.cluster.name": name, "k0da.cluster.type": "k0s"}
-	if node != nil && len(node.Labels) > 0 {
-		for k, v := range node.Labels {
-			labels[k] = v
-		}
-	}
-
-	// Node-specific k0s args at the end
-	if node != nil && len(node.Args) > 0 {
-		cmdArgs = append(cmdArgs, node.Args...)
-	}
+	// Ports, Env, Labels
+	publish := buildPublishPortsFromNode(node)
+	publish = ensureAPIExposed(publish)
+	publish = ensureAPIPortBound(publish)
+	env := buildEnvFromNode(node)
+	labels := buildLabelsForNode(name, name, "controller", node)
 
 	// Effective image with node override
 	effectiveImage := image
@@ -241,14 +192,12 @@ func createK0sCluster(ctx context.Context, b runtime.Runtime, name, image string
 		Tmpfs:       tmpfs,
 		SecurityOpt: []string{"seccomp=unconfined", "apparmor=unconfined", "label=disable"},
 		Privileged:  true,
-		//AutoRemove:  true,
-		Publish: publish,
-		Network: networkName,
+		Publish:     publish,
+		Network:     networkName,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create container: %w", err)
 	}
-	// No file persistence: explicit HostPort ensures Docker/Podman keep mapping across daemon restarts
 
 	fmt.Printf("✅ Container created successfully\n")
 
@@ -292,4 +241,168 @@ func copyManifestsToDir(paths []string, baseDir string, destDir string) error {
 		}
 	}
 	return nil
+}
+
+// joinAdditionalNodes creates tokens on the primary node and starts additional nodes defined in the config.
+func joinAdditionalNodes(ctx context.Context, b runtime.Runtime, clusterName, image string, wait bool, timeout string, cc *k0daconfig.ClusterConfig) error {
+	primary := clusterName
+	clusterDir := filepath.Join(os.Getenv("HOME"), ".k0da", "clusters", clusterName)
+	tokensDir := filepath.Join(clusterDir, "tokens")
+	if err := os.MkdirAll(tokensDir, 0755); err != nil {
+		return fmt.Errorf("create tokens dir: %w", err)
+	}
+
+	networkName := k0daconfig.DefaultNetwork
+	if cc != nil {
+		networkName = cc.Spec.Options.Network
+	}
+	if err := b.EnsureNetwork(ctx, networkName); err != nil {
+		return fmt.Errorf("failed to ensure network: %w", err)
+	}
+
+	primaryNode := cc.PickPrimaryNode()
+	idx := 0
+	for i := range cc.Spec.Nodes {
+		n := &cc.Spec.Nodes[i]
+		if primaryNode != nil && &cc.Spec.Nodes[i] == primaryNode {
+			continue
+		}
+		role := strings.ToLower(strings.TrimSpace(n.Role))
+		if role == "" {
+			role = "worker"
+		}
+		tokenOut, exit, err := b.ExecInContainer(ctx, primary, []string{"k0s", "token", "create", "--role=" + role})
+		if err != nil || exit != 0 {
+			return fmt.Errorf("failed to create %s token on primary: %v", role, err)
+		}
+		token := strings.TrimSpace(tokenOut)
+		nodeName := strings.TrimSpace(n.Name)
+		if nodeName == "" {
+			nodeName = fmt.Sprintf("%s-%s-%d", clusterName, role, idx)
+			idx++
+		}
+		hostTokenPath := filepath.Join(tokensDir, nodeName+".token")
+		if err := os.WriteFile(hostTokenPath, []byte(token+"\n"), 0600); err != nil {
+			return fmt.Errorf("write token file: %v", err)
+		}
+
+		var cmdArgs []string
+		switch role {
+		case "controller":
+			cmdArgs = []string{"k0s", "controller", "--token-file", "/etc/k0s/join.token"}
+		default:
+			cmdArgs = []string{"k0s", "worker", "--token-file", "/etc/k0s/join.token"}
+		}
+		if len(n.Args) > 0 {
+			cmdArgs = append(cmdArgs, n.Args...)
+		}
+
+		volumeName := fmt.Sprintf("%s-var", nodeName)
+		mounts := runtime.Mounts{
+			{Type: "volume", Source: volumeName, Target: "/var"},
+			{Type: "bind", Source: "/lib/modules", Target: "/lib/modules", Options: []string{"ro"}},
+			{Type: "bind", Source: hostTokenPath, Target: "/etc/k0s/join.token", Options: []string{"ro"}},
+		}
+
+		publish := buildPublishPortsFromNode(n)
+		// Env, Labels
+		env := buildEnvFromNode(n)
+		labels := buildLabelsForNode(clusterName, nodeName, role, n)
+
+		effectiveImage := image
+		if strings.TrimSpace(n.Image) != "" {
+			effectiveImage = n.Image
+		}
+
+		_, err = b.RunContainer(ctx, runtime.RunContainerOptions{
+			Name:        nodeName,
+			Hostname:    nodeName,
+			Image:       effectiveImage,
+			Args:        cmdArgs,
+			Env:         env,
+			Labels:      labels,
+			Mounts:      mounts,
+			Tmpfs:       map[string]string{"/run": "", "/var/run": ""},
+			SecurityOpt: []string{"seccomp=unconfined", "apparmor=unconfined", "label=disable"},
+			Privileged:  true,
+			Publish:     publish,
+			Network:     networkName,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to start node %s: %w", nodeName, err)
+		}
+		if wait {
+			// Only wait for controller nodes; workers don't expose the same status
+			if role == "controller" {
+				if err := utils.WaitForK0sReady(ctx, b, nodeName, timeout); err != nil {
+					return fmt.Errorf("node %s failed to become ready: %w", nodeName, err)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// Helpers
+func buildPublishPortsFromNode(node *k0daconfig.NodeSpec) []runtime.PortSpec {
+	publish := []runtime.PortSpec{}
+	if node != nil && len(node.Ports) > 0 {
+		for _, p := range node.Ports {
+			proto := strings.ToLower(p.Protocol)
+			if proto == "" {
+				proto = "tcp"
+			}
+			publish = append(publish, runtime.PortSpec{ContainerPort: p.ContainerPort, Protocol: proto, HostIP: p.HostIP, HostPort: p.HostPort})
+		}
+	}
+	return publish
+}
+
+func ensureAPIExposed(publish []runtime.PortSpec) []runtime.PortSpec {
+	hasAPI := false
+	for _, ps := range publish {
+		if ps.ContainerPort == 6443 && (ps.Protocol == "" || strings.ToLower(ps.Protocol) == "tcp") {
+			hasAPI = true
+			break
+		}
+	}
+	if !hasAPI {
+		publish = append(publish, runtime.PortSpec{ContainerPort: 6443, Protocol: "tcp"})
+	}
+	return publish
+}
+
+func ensureAPIPortBound(publish []runtime.PortSpec) []runtime.PortSpec {
+	for i := range publish {
+		if publish[i].ContainerPort == 6443 && (publish[i].Protocol == "" || strings.ToLower(publish[i].Protocol) == "tcp") {
+			if publish[i].HostPort == 0 {
+				hostIP := publish[i].HostIP
+				if p, err := utils.AllocateHostPort(hostIP); err == nil && p > 0 {
+					publish[i].HostPort = p
+				}
+			}
+			break
+		}
+	}
+	return publish
+}
+
+func buildEnvFromNode(node *k0daconfig.NodeSpec) runtime.EnvVars {
+	var env runtime.EnvVars
+	if node != nil && len(node.Env) > 0 {
+		for k, v := range node.Env {
+			env = append(env, runtime.EnvVar{Name: k, Value: v})
+		}
+	}
+	return env
+}
+
+func buildLabelsForNode(clusterName, nodeName, role string, node *k0daconfig.NodeSpec) map[string]string {
+	labels := map[string]string{k0daconfig.LabelCluster: "true", k0daconfig.LabelClusterName: clusterName, k0daconfig.LabelClusterType: "k0s", k0daconfig.LabelNodeName: nodeName, k0daconfig.LabelNodeRole: role}
+	if node != nil && len(node.Labels) > 0 {
+		for k, v := range node.Labels {
+			labels[k] = v
+		}
+	}
+	return labels
 }

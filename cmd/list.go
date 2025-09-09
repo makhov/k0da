@@ -7,6 +7,7 @@ import (
 	"strings"
 	"text/tabwriter"
 
+	k0daconfig "github.com/makhov/k0da/internal/config"
 	"github.com/makhov/k0da/internal/runtime"
 	"github.com/spf13/cobra"
 )
@@ -70,18 +71,31 @@ func getK0daClusters(includeStopped bool) ([]ClusterInfo, error) {
 		return nil, err
 	}
 
-	selector := map[string]string{"k0da.cluster": "true"}
+	selector := map[string]string{k0daconfig.LabelCluster: "true"}
 	list, err := b.ListContainersByLabel(ctx, selector, includeStopped)
 	if err != nil {
 		return nil, err
 	}
 
-	clusters := make([]ClusterInfo, 0, len(list))
+	// Group by cluster name; prefer controller node for display
+	grouped := map[string]runtime.ContainerInfo{}
 	for _, c := range list {
-		name := c.Name
-		if v, ok := c.Labels["k0da.cluster.name"]; ok && strings.TrimSpace(v) != "" {
-			name = v
+		cluster := c.Name
+		if v, ok := c.Labels[k0daconfig.LabelClusterName]; ok && strings.TrimSpace(v) != "" {
+			cluster = v
 		}
+		if existing, ok := grouped[cluster]; ok {
+			role := strings.ToLower(c.Labels[k0daconfig.LabelNodeRole])
+			exrole := strings.ToLower(existing.Labels[k0daconfig.LabelNodeRole])
+			if exrole != "controller" && role == "controller" {
+				grouped[cluster] = c
+			}
+		} else {
+			grouped[cluster] = c
+		}
+	}
+	clusters := make([]ClusterInfo, 0, len(grouped))
+	for name, c := range grouped {
 		id := c.ID
 		if len(id) > 12 {
 			id = id[:12]
