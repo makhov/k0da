@@ -47,6 +47,9 @@ func init() {
 
 func runCreate(cmd *cobra.Command, args []string) error {
 	clusterName := name
+	if len(args) > 0 {
+		clusterName = args[0]
+	}
 
 	// Load cluster config (always returns a valid config)
 	cc, err := k0daconfig.LoadClusterConfig(strings.TrimSpace(clusterConfigPath))
@@ -99,7 +102,7 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	}
 
 	// If multinode defined, join additional nodes to the primary
-	if cc != nil && len(cc.Spec.Nodes) > 1 {
+	if len(cc.Spec.Nodes) > 1 {
 		if err := joinAdditionalNodes(ctx, r, clusterName, image, wait, timeout, cc); err != nil {
 			return fmt.Errorf("failed to join additional nodes: %w", err)
 		}

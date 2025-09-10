@@ -7,6 +7,8 @@ import (
 
 	"github.com/imdario/mergo"
 	"gopkg.in/yaml.v3"
+
+	"github.com/makhov/k0da/internal/plugins"
 )
 
 const (
@@ -99,6 +101,15 @@ func LoadClusterConfig(path string) (*ClusterConfig, error) {
 		// Remember the source path for resolving relative references (e.g., manifests)
 		c.SourcePath = path
 	}
+
+	// Extract embedded plugins and add them to manifests
+	pluginPaths, err := plugins.PluginManifestList()
+	if err != nil {
+		return nil, fmt.Errorf("failed to list plugins: %w", err)
+	}
+
+	// Add plugin manifests to the config
+	c.Spec.K0s.Manifests = append(c.Spec.K0s.Manifests, pluginPaths...)
 
 	// Apply defaults and validate
 	if err := c.Validate(); err != nil {
