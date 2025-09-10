@@ -153,11 +153,20 @@ func LoadKubeconfig(filePath string) (*Kubeconfig, error) {
 	return &kubeconfig, nil
 }
 
-// SaveKubeconfig saves a kubeconfig to file
-func SaveKubeconfig(kubeconfig *Kubeconfig, filePath string) error {
+// MarshalKubeconfig marshals a kubeconfig to YAML bytes
+func MarshalKubeconfig(kubeconfig *Kubeconfig) ([]byte, error) {
 	data, err := yaml.Marshal(kubeconfig)
 	if err != nil {
-		return fmt.Errorf("failed to marshal kubeconfig: %w", err)
+		return nil, fmt.Errorf("failed to marshal kubeconfig: %w", err)
+	}
+	return data, nil
+}
+
+// SaveKubeconfig saves a kubeconfig to file
+func SaveKubeconfig(kubeconfig *Kubeconfig, filePath string) error {
+	data, err := MarshalKubeconfig(kubeconfig)
+	if err != nil {
+		return err
 	}
 
 	if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
