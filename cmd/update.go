@@ -36,7 +36,7 @@ func init() {
 
 	updateCmd.Flags().StringVarP(&updateName, "name", "n", DefaultClusterName, "name of the cluster to update")
 	updateCmd.Flags().StringVarP(&updateClusterCfg, "config", "c", "", "cluster config file")
-	updateCmd.Flags().StringVarP(&updateImage, "image", "i", "quay.io/k0sproject/k0s:v1.33.3-k0s.0", "k0s image to use (overrides config)")
+	updateCmd.Flags().StringVarP(&updateImage, "image", "i", k0daconfig.DefaultK0sImageRepo+":"+k0daconfig.DefaultK0sVersion, "k0s image to use (overrides config)")
 	updateCmd.Flags().StringVarP(&updateTimeout, "timeout", "t", "60s", "timeout for readiness wait")
 }
 
@@ -49,21 +49,16 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("cluster name is required")
 	}
 
-	// Load cluster config if provided
-	var cc *k0daconfig.ClusterConfig
-	if strings.TrimSpace(updateClusterCfg) != "" {
-		var err error
-		cc, err = k0daconfig.LoadClusterConfig(updateClusterCfg)
-		if err != nil {
-			return fmt.Errorf("failed to load cluster config: %w", err)
-		}
-		if err := cc.Validate(); err != nil {
-			return fmt.Errorf("invalid cluster config: %w", err)
-		}
-		if updateImage == "" || updateImage == "quay.io/k0sproject/k0s:v1.33.3-k0s.0" {
-			if cc.Spec.K0s.Image != "" || cc.Spec.K0s.Version != "" {
-				updateImage = cc.Spec.K0s.EffectiveImage()
-			}
+	// Load cluster config (always returns a valid config)
+	cc, err := k0daconfig.LoadClusterConfig(strings.TrimSpace(updateClusterCfg))
+	if err != nil {
+		return fmt.Errorf("failed to load cluster config: %w", err)
+	}
+
+	// Apply image from config if no explicit image override provided
+	if updateImage == "" || k0daconfig.NormalizeImageTag(updateImage) == k0daconfig.DefaultK0sImageRepo+":"+k0daconfig.NormalizeVersionTag(k0daconfig.DefaultK0sVersion) {
+		if cc.Spec.K0s.Image != "" || cc.Spec.K0s.Version != "" {
+			updateImage = cc.Spec.K0s.EffectiveImage()
 		}
 	}
 
@@ -82,37 +77,19 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to create cluster directory: %w", err)
 	}
 
-	// Stage manifests if defined (clean dir first to avoid stale files and ordering issues)
-	if cc != nil && len(cc.Spec.K0s.Manifests) > 0 {
-		manifestsDir := filepath.Join(clusterDir, "manifests")
-		if err := os.MkdirAll(manifestsDir, 0755); err != nil {
-			return fmt.Errorf("failed to create manifests dir: %w", err)
-		}
-		if err := utils.RemoveAllFiles(manifestsDir); err != nil {
-			return fmt.Errorf("failed to clean manifests dir: %w", err)
-		}
-		if err := utils.CopyManifestsToDir(cc, manifestsDir); err != nil {
-			return fmt.Errorf("failed to stage manifests: %w", err)
-		}
+	if err := utils.CopyManifestsToDir(cc, cc.ManifestDir(clusterName)); err != nil {
+		return fmt.Errorf("failed to stage manifests: %w", err)
 	}
 
-	// Apply dynamic k0s config in-cluster if provided, using the primary controller
-	if cc != nil {
-		etcDir := filepath.Join(clusterDir, "etc-k0s")
-		if err := os.MkdirAll(etcDir, 0755); err != nil {
-			return fmt.Errorf("failed to create etc-k0s dir: %w", err)
-		}
-		p, err := cc.WriteEffectiveK0sConfig(etcDir)
-		if err != nil {
-			return fmt.Errorf("failed to write effective k0s config: %w", err)
-		}
-		_ = p // mounted at /etc/k0s/k0s.yaml inside containers
-
-		// The primary node's container name equals the cluster name
-		primaryName := clusterName
-		if out, exit, err := r.ExecInContainer(ctx, primaryName, []string{"k0s", "kc", "apply", "-f", "/etc/k0s/k0s.yaml"}); err != nil || exit != 0 {
-			return fmt.Errorf("failed to apply dynamic config via k0s on primary '%s'. output: %s, error: %v", primaryName, out, err)
-		}
+	// Apply dynamic k0s config in-cluster if provided
+	etcDir := filepath.Join(clusterDir, "etc-k0s")
+	_, err = cc.WriteEffectiveK0sConfig(etcDir)
+	if err != nil {
+		return fmt.Errorf("failed to write effective k0s config: %w", err)
+	}
+	// The config file should be mounted at /etc/k0s/k0s.yaml, so we can apply it directly
+	if out, exit, err := r.ExecInContainer(ctx, clusterName, []string{"k0s", "kc", "apply", "-f", "/etc/k0s/k0s.yaml"}); err != nil || exit != 0 {
+		return fmt.Errorf("failed to apply dynamic config via k0s: %v, out: %s", err, out)
 	}
 
 	fmt.Printf("✅ Cluster '%s' updated successfully!\n", clusterName)

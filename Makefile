@@ -7,7 +7,16 @@ TAG := $(shell git describe --tags --abbrev=0 2>/dev/null || echo dev)
 COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 DATE := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 
+# Try to fetch latest stable k0s version. Normalize +k0s.X to -k0s.X for image tags.
+STABLE_K0S_VERSION_RAW := $(shell curl -fsSL https://docs.k0sproject.io/stable.txt 2>/dev/null || true)
+STABLE_K0S_VERSION := $(strip $(subst +,-,$(STABLE_K0S_VERSION_RAW)))
+
 LDFLAGS := -s -w -X $(MODULE)/cmd.Version=$(TAG) -X $(MODULE)/cmd.Commit=$(COMMIT) -X $(MODULE)/cmd.BuildDate=$(DATE)
+ifeq ($(STABLE_K0S_VERSION),)
+# no-op; keep the default compiled into the source
+else
+LDFLAGS += -X $(MODULE)/internal/config.DefaultK0sVersion=$(STABLE_K0S_VERSION)
+endif
 
 .PHONY: build test clean build-all deps test-coverage fmt lint run help
 
