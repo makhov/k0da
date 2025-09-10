@@ -105,7 +105,7 @@ func (d *Docker) RunContainer(ctx context.Context, opts RunContainerOptions) (st
 	}
 
 	// Ensure container restarts after daemon restart
-	hostConfig.RestartPolicy = container.RestartPolicy{Name: "unless-stopped"}
+	hostConfig.RestartPolicy = container.RestartPolicy{Name: "always"}
 
 	networking := &network.NetworkingConfig{}
 	if strings.TrimSpace(opts.Network) != "" {
