@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
 	k0daconfig "github.com/makhov/k0da/internal/config"
@@ -81,9 +80,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to stage manifests: %w", err)
 	}
 
-	// Apply dynamic k0s config in-cluster if provided
-	etcDir := filepath.Join(clusterDir, "etc-k0s")
-	_, err = cc.WriteEffectiveK0sConfig(etcDir)
+	err = cc.WriteEffectiveK0sConfig(clusterName)
 	if err != nil {
 		return fmt.Errorf("failed to write effective k0s config: %w", err)
 	}

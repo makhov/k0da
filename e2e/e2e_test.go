@@ -436,3 +436,56 @@ spec:
 	require.Contains(t, view, "telemetry:")
 	require.NotContains(t, view, "enabled: true")
 }
+
+func TestE2E_LocalPathProvisioner_DefaultConfig(t *testing.T) {
+	k0daBin := getBinaryPath(t)
+	name := "k0da-e2e-localpath-" + strings.ReplaceAll(time.Now().Format("150405.000"), ".", "")
+
+	// Ensure cleanup
+	t.Cleanup(func() {
+		_, _ = runCmd(t, k0daBin, "delete", "--name", name)
+	})
+
+	// Create cluster with default config (should include local-path-provisioner)
+	out, code := runCmd(t, k0daBin, "create", "--name", name, "--timeout", "180s")
+	require.Equalf(t, 0, code, "create failed (%d):\n%s", code, out)
+
+	kubeconfig := getKubeconfigPath(t)
+	ctx := "k0da-" + name
+
+	// Wait for local-path-provisioner deployment to be ready
+	t.Log("Waiting for local-path-provisioner deployment to be ready...")
+	deadline := time.Now().Add(3 * time.Minute)
+	for time.Now().Before(deadline) {
+		out, _ := runKubectl(t, kubeconfig, ctx, "get", "deployment", "local-path-provisioner", "-n", "local-path-storage", "-o", "jsonpath={.status.readyReplicas}")
+		if strings.TrimSpace(out) == "1" {
+			break
+		}
+		time.Sleep(3 * time.Second)
+	}
+
+	// Check that local-path-provisioner pod is running
+	out, code = runKubectl(t, kubeconfig, ctx, "get", "pods", "-n", "local-path-storage", "-l", "app=local-path-provisioner", "-o", "jsonpath={.items[0].status.phase}")
+	require.Equalf(t, 0, code, "kubectl get pods failed (%d):\n%s", code, out)
+	require.Equal(t, "Running", strings.TrimSpace(out), "local-path-provisioner pod is not running")
+
+	// Check that local-path storage class exists
+	out, code = runKubectl(t, kubeconfig, ctx, "get", "storageclass", "local-path", "-o", "jsonpath={.metadata.name}")
+	require.Equalf(t, 0, code, "kubectl get storageclass failed (%d):\n%s", code, out)
+	require.Equal(t, "local-path", strings.TrimSpace(out), "local-path storage class not found")
+
+	// Check that local-path storage class is the default
+	out, code = runKubectl(t, kubeconfig, ctx, "get", "storageclass", "local-path", "-o", "jsonpath={.metadata.annotations.storageclass\\.kubernetes\\.io/is-default-class}")
+	require.Equalf(t, 0, code, "kubectl get storageclass annotation failed (%d):\n%s", code, out)
+	require.Equal(t, "true", strings.TrimSpace(out), "local-path storage class is not the default")
+
+	// Verify that the local-path-provisioner deployment has the correct number of replicas
+	out, code = runKubectl(t, kubeconfig, ctx, "get", "deployment", "local-path-provisioner", "-n", "local-path-storage", "-o", "jsonpath={.status.replicas}")
+	require.Equalf(t, 0, code, "kubectl get deployment replicas failed (%d):\n%s", code, out)
+	require.Equal(t, "1", strings.TrimSpace(out), "local-path-provisioner deployment should have 1 replica")
+
+	// Verify that the local-path-provisioner deployment is available
+	out, code = runKubectl(t, kubeconfig, ctx, "get", "deployment", "local-path-provisioner", "-n", "local-path-storage", "-o", "jsonpath={.status.conditions[?(@.type==\"Available\")].status}")
+	require.Equalf(t, 0, code, "kubectl get deployment status failed (%d):\n%s", code, out)
+	require.Equal(t, "True", strings.TrimSpace(out), "local-path-provisioner deployment should be available")
+}

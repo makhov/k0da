@@ -189,8 +189,17 @@ func (c *ClusterConfig) MaybeWriteInlineK0sConfig(dir string) (string, error) {
 func (c *ClusterConfig) ClusterDir(clusterName string) string {
 	return filepath.Join(os.Getenv("HOME"), ".k0da", "clusters", clusterName)
 }
+
+func (c *ClusterConfig) ConfigDir(clusterName string) string {
+	return filepath.Join(c.ClusterDir(clusterName), "etc-k0s")
+}
+
+func (c *ClusterConfig) ConfigPath(clusterName string) string {
+	return filepath.Join(c.ConfigDir(clusterName), "k0s.yaml")
+}
+
 func (c *ClusterConfig) ManifestDir(clusterName string) string {
-	return filepath.Join(os.Getenv("HOME"), ".k0da", "clusters", clusterName, "manifests")
+	return filepath.Join(c.ClusterDir(clusterName), "manifests")
 }
 
 // EffectiveImage returns the k0s image to use based on precedence:
@@ -238,17 +247,17 @@ func (c *ClusterConfig) EffectiveK0sConfig() map[string]any {
 }
 
 // WriteEffectiveK0sConfig writes the effective k0s config (defaults merged with inline user config) to dir.
-func (c *ClusterConfig) WriteEffectiveK0sConfig(dir string) (string, error) {
+func (c *ClusterConfig) WriteEffectiveK0sConfig(clusterName string) error {
+	dir := c.ConfigDir(clusterName)
 	if err := os.MkdirAll(dir, 0755); err != nil {
-		return "", fmt.Errorf("create dir: %w", err)
+		return fmt.Errorf("create dir: %w", err)
 	}
 	data, err := yaml.Marshal(c.EffectiveK0sConfig())
 	if err != nil {
-		return "", fmt.Errorf("marshal k0s config: %w", err)
+		return fmt.Errorf("marshal k0s config: %w", err)
 	}
-	p := dir + "/k0s.yaml"
-	if err := os.WriteFile(p, data, 0644); err != nil {
-		return "", fmt.Errorf("write k0s config: %w", err)
+	if err := os.WriteFile(c.ConfigPath(clusterName), data, 0644); err != nil {
+		return fmt.Errorf("write k0s config: %w", err)
 	}
-	return p, nil
+	return nil
 }

@@ -85,19 +85,13 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to create cluster directory: %w", err)
 	}
 
-	// Always write effective k0s config (defaults merged with inline user config) for consistency
-	cfgDir := filepath.Join(clusterDir, "etc-k0s")
-	p, err := cc.WriteEffectiveK0sConfig(cfgDir)
+	err = cc.WriteEffectiveK0sConfig(clusterName)
 	if err != nil {
 		return fmt.Errorf("failed to write effective k0s config: %w", err)
 	}
-	var k0daConfigPath string
-	if p != "" {
-		k0daConfigPath = p
-	}
 
 	// Create the primary node/container using backend
-	if err := createK0sCluster(ctx, r, clusterName, finalImage, wait, timeout, cc, k0daConfigPath); err != nil {
+	if err := createK0sCluster(ctx, r, clusterName, finalImage, wait, timeout, cc); err != nil {
 		return fmt.Errorf("failed to create k0s cluster: %w", err)
 	}
 
@@ -114,27 +108,12 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func createK0sCluster(ctx context.Context, b runtime.Runtime, name, image string, wait bool, timeout string, cc *k0daconfig.ClusterConfig, k0sConfigHostPath string) error {
+func createK0sCluster(ctx context.Context, b runtime.Runtime, name, image string, wait bool, timeout string, cc *k0daconfig.ClusterConfig) error {
 	containerName := name
 	hostname := name
 	volumeName := fmt.Sprintf("%s-var", name)
 
 	fmt.Printf("Creating container '%s' with image '%s' using %s...\n", containerName, image, b.Name())
-
-	// Build command args
-	cmdArgs := []string{"k0s", "controller", "--no-taints", "--enable-dynamic-config"}
-	if len(cc.Spec.Nodes) == 1 {
-		cmdArgs = append(cmdArgs, "--single")
-	} else {
-		cmdArgs = append(cmdArgs, "--enable-worker")
-	}
-	if strings.TrimSpace(k0sConfigHostPath) != "" {
-		cmdArgs = append(cmdArgs, "--config", "/etc/k0s/k0s.yaml")
-	}
-	// Global extra k0s args
-	if len(cc.Spec.K0s.Args) > 0 {
-		cmdArgs = append(cmdArgs, cc.Spec.K0s.Args...)
-	}
 
 	// Ensure manifests directory exists on host for k0s manifests and copy manifests into it
 	hostK0daManifestsPath := cc.ManifestDir(name)
@@ -149,10 +128,7 @@ func createK0sCluster(ctx context.Context, b runtime.Runtime, name, image string
 	}
 	// Mount manifests directory into k0s manifests path
 	mounts = append(mounts, runtime.Mount{Type: "bind", Source: hostK0daManifestsPath, Target: "/var/lib/k0s/manifests/k0da"})
-	if strings.TrimSpace(k0sConfigHostPath) != "" {
-		// Mount only the k0s.yaml file as read-only, leaving /etc/k0s writable
-		mounts = append(mounts, runtime.Mount{Type: "bind", Source: k0sConfigHostPath, Target: "/etc/k0s/k0s.yaml", Options: []string{"ro"}})
-	}
+	mounts = append(mounts, runtime.Mount{Type: "bind", Source: cc.ConfigPath(name), Target: "/etc/k0s/k0s.yaml", Options: []string{"ro"}})
 
 	// Node overrides/extensions
 	node := cc.PickPrimaryNode()
@@ -161,6 +137,9 @@ func createK0sCluster(ctx context.Context, b runtime.Runtime, name, image string
 			mounts = append(mounts, runtime.Mount{Type: m.Type, Source: m.Source, Target: m.Target, Options: m.Options})
 		}
 	}
+
+	// Build command args
+	cmdArgs := buildK0sControllerArgs(cc, node, true)
 
 	// Ports, Env, Labels
 	publish := buildPublishPortsFromNode(node)
@@ -266,12 +245,12 @@ func joinAdditionalNodes(ctx context.Context, b runtime.Runtime, clusterName, im
 		var cmdArgs []string
 		switch role {
 		case "controller":
-			cmdArgs = []string{"k0s", "controller", "--token-file", "/etc/k0s/join.token"}
+			cmdArgs = buildK0sControllerArgs(cc, n, false)
 		default:
 			cmdArgs = []string{"k0s", "worker", "--token-file", "/etc/k0s/join.token"}
-		}
-		if len(n.Args) > 0 {
-			cmdArgs = append(cmdArgs, n.Args...)
+			if len(n.Args) > 0 {
+				cmdArgs = append(cmdArgs, n.Args...)
+			}
 		}
 
 		volumeName := fmt.Sprintf("%s-var", nodeName)
@@ -318,6 +297,35 @@ func joinAdditionalNodes(ctx context.Context, b runtime.Runtime, clusterName, im
 		}
 	}
 	return nil
+}
+
+// buildK0sControllerArgs builds k0s controller command arguments
+func buildK0sControllerArgs(cc *k0daconfig.ClusterConfig, node *k0daconfig.NodeSpec, isPrimary bool) []string {
+	cmdArgs := []string{"k0s", "controller", "--enable-dynamic-config", "--disable-components=metrics-server"}
+
+	// Add role-specific arguments
+	if len(cc.Spec.Nodes) == 1 {
+		cmdArgs = append(cmdArgs, "--single")
+	} else {
+		cmdArgs = append(cmdArgs, "--enable-worker", "--no-taints")
+	}
+
+	if !isPrimary {
+		cmdArgs = append(cmdArgs, "--token-file", "/etc/k0s/join.token")
+	}
+	cmdArgs = append(cmdArgs, "--config", "/etc/k0s/k0s.yaml")
+
+	// Add global k0s args
+	if len(cc.Spec.K0s.Args) > 0 {
+		cmdArgs = append(cmdArgs, cc.Spec.K0s.Args...)
+	}
+
+	// Add node-specific args
+	if node != nil && len(node.Args) > 0 {
+		cmdArgs = append(cmdArgs, node.Args...)
+	}
+
+	return cmdArgs
 }
 
 // Helpers
