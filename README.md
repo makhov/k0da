@@ -122,6 +122,7 @@ spec:
     manifests:
       - ./manifests/00-namespace.yaml
       - ./manifests/10-app.yaml
+      - https://raw.githubusercontent.com/haproxytech/kubernetes-ingress/refs/heads/master/deploy/haproxy-ingress.yaml
 
   nodes:
     - role: controller

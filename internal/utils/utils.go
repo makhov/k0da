@@ -3,16 +3,20 @@ package utils
 import (
 	"context"
 	"fmt"
-	k0daconfig "github.com/makhov/k0da/internal/config"
+	"io"
 	"io/fs"
 	"net"
+	"net/http"
+	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
 
+	k0daconfig "github.com/makhov/k0da/internal/config"
 	"github.com/makhov/k0da/internal/runtime"
 )
 
@@ -202,22 +206,59 @@ func CopyManifestsToDir(cc *k0daconfig.ClusterConfig, destDir string) error {
 	return copyManifestsToDir(cc.Spec.K0s.Manifests, baseDir, destDir)
 }
 
+func isURL(str string) bool {
+	u, err := url.Parse(str)
+	if err != nil {
+		return false
+	}
+	return u.Scheme != ""
+}
+
+func urlBase(str string) string {
+	u, _ := url.Parse(str)
+	return path.Base(u.Path)
+}
+
 func copyManifestsToDir(paths []string, baseDir string, destDir string) error {
 	for i, mp := range paths {
 		p := strings.TrimSpace(mp)
 		if p == "" {
 			continue
 		}
-		abs := p
-		if !filepath.IsAbs(p) && strings.TrimSpace(baseDir) != "" {
-			abs = filepath.Join(baseDir, p)
-		}
-		data, err := os.ReadFile(abs)
-		if err != nil {
-			return fmt.Errorf("failed to read manifest %q: %w", p, err)
+		var (
+			data     []byte
+			baseName string
+			err      error
+		)
+		if isURL(p) {
+			resp, err := http.Get(p)
+			if err != nil {
+				return err
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode != http.StatusOK {
+				return fmt.Errorf("bad status: %s", resp.Status)
+			}
+
+			data, err = io.ReadAll(resp.Body)
+			if err != nil {
+				return fmt.Errorf("failed to read response for file %s body: %w", p, err)
+			}
+			baseName = urlBase(p)
+		} else {
+			abs := p
+			if !filepath.IsAbs(p) && strings.TrimSpace(baseDir) != "" {
+				abs = filepath.Join(baseDir, p)
+			}
+			data, err = os.ReadFile(abs)
+			if err != nil {
+				return fmt.Errorf("failed to read manifest %q: %w", p, err)
+			}
+			baseName = filepath.Base(abs)
 		}
 		// Prefix with index to keep deterministic order
-		dst := filepath.Join(destDir, fmt.Sprintf("%03d_%s", i, filepath.Base(abs)))
+		dst := filepath.Join(destDir, fmt.Sprintf("%03d_%s", i, baseName))
 		if err := os.WriteFile(dst, data, 0644); err != nil {
 			return fmt.Errorf("failed to write manifest to %q: %w", dst, err)
 		}
