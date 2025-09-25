@@ -301,7 +301,7 @@ func joinAdditionalNodes(ctx context.Context, b runtime.Runtime, clusterName, im
 
 // buildK0sControllerArgs builds k0s controller command arguments
 func buildK0sControllerArgs(cc *k0daconfig.ClusterConfig, node *k0daconfig.NodeSpec, isPrimary bool) []string {
-	cmdArgs := []string{"k0s", "controller", "--enable-dynamic-config", "--disable-components=metrics-server"}
+	cmdArgs := []string{"k0s", "controller", "--enable-dynamic-config", "--disable-components=metrics-server", "--ignore-pre-flight-checks"}
 
 	// Add role-specific arguments
 	if len(cc.Spec.Nodes) == 1 {

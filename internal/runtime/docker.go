@@ -86,7 +86,8 @@ func (d *Docker) RunContainer(ctx context.Context, opts RunContainerOptions) (st
 	if strings.HasPrefix(hostSock, "unix://") {
 		hostSock = strings.TrimPrefix(d.socket, "unix://")
 	}
-	hostConfig.Binds = append(hostConfig.Binds, hostSock+":"+"/var/run/docker.sock")
+
+	hostConfig.Binds = append(hostConfig.Binds, "/var/run/docker.sock:/var/run/docker.sock")
 	// Port publishing
 	if len(opts.Publish) > 0 {
 		hostConfig.PortBindings = natPortBindings(opts.Publish)

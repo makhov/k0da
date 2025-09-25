@@ -58,6 +58,46 @@ func tryPodmanMacTmpdirSocket() string {
 	return ""
 }
 
+// getDockerSocketCandidates returns a list of potential Docker socket paths
+// ordered by preference (most common/reliable first).
+func getDockerSocketCandidates() []string {
+	home := os.Getenv("HOME")
+	candidates := []string{"/var/run/docker.sock"}
+
+	// Add user-specific candidates if HOME is available
+	if home != "" {
+		candidates = append(candidates, []string{
+			filepath.Join(home, ".colima", "docker.sock"),
+			filepath.Join(home, ".colima", "default", "docker.sock"),
+			filepath.Join(home, ".orbstack", "run", "docker.sock"),
+			filepath.Join(home, ".lima", "default", "sock", "docker.sock"),
+			filepath.Join(home, "Library", "Containers", "com.docker.docker", "Data", "vms", "0", "docker.sock"),
+			filepath.Join(home, ".rd", "docker.sock"),
+			filepath.Join(home, ".local", "share", "containers", "podman", "machine", "podman-machine-default", "podman.sock"),
+		}...)
+	}
+
+	return candidates
+}
+
+// tryDockerSocketCandidates checks all Docker socket candidates and returns
+// the first one that exists and is reachable, or empty string if none found.
+func tryDockerSocketCandidates() string {
+	candidates := getDockerSocketCandidates()
+
+	for _, socketPath := range candidates {
+		if _, err := os.Stat(socketPath); err == nil {
+			// Probe reachability (connection refused -> skip)
+			conn, err := net.DialTimeout("unix", socketPath, 500*time.Millisecond)
+			if err == nil {
+				_ = conn.Close()
+				return "unix://" + socketPath
+			}
+		}
+	}
+	return ""
+}
+
 // tryPodmanConnectionList queries `podman system connection list --format json`
 // and returns the URI and Identity of the best connection (prefer rootful), or "" if not found.
 func tryPodmanConnectionList() (string, string) {
@@ -155,8 +195,13 @@ func Detect(ctx context.Context, opts DetectOptions) (Runtime, error) {
 	if socket == "" {
 		switch runtime {
 		case "docker", "":
-			// Default Docker socket
-			socket = "unix:///var/run/docker.sock"
+			// Try all Docker socket candidates
+			if s := tryDockerSocketCandidates(); s != "" {
+				socket = s
+			} else {
+				// Fallback to default Docker socket
+				socket = "unix:///var/run/docker.sock"
+			}
 		case "podman":
 			// First, prefer connection list (rootful if available)
 			u, id := tryPodmanConnectionList()
@@ -216,6 +261,11 @@ func Detect(ctx context.Context, opts DetectOptions) (Runtime, error) {
 			return nil, fmt.Errorf("unknown runtime: %s", runtime)
 		}
 	}
+	// Try Docker with any available socket first if no socket was set
+	if socket == "" {
+		socket = tryDockerSocketCandidates()
+	}
+
 	if b, err := NewDockerRuntime(ctx, socket); err == nil {
 		return b, nil
 	}
