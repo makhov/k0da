@@ -172,11 +172,6 @@ func tryPodmanConnectionList() (string, string) {
 	return "", ""
 }
 
-type machineInfo struct {
-	Name    string
-	Rootful bool
-}
-
 func podmanMachineIsRootful() (bool, bool) {
 	cmd := exec.Command("podman", "machine", "inspect")
 	out, err := cmd.CombinedOutput()

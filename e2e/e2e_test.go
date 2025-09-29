@@ -106,31 +106,7 @@ spec:
 	require.Equalf(t, 0, code, "delete failed (%d):\n%s", code, out)
 }
 
-var k0daConfig = `
-apiVersion: k0da.k0sproject.io/v1alpha1
-kind: Cluster
-spec:
-  nodes:
-    - role: controller
-      ports:
-        - containerPort: 443
-          hostPort: 32443
-  k0s:
-    version: v1.33.2-k0s.0
-    config:
-      apiVersion: k0s.k0sproject.io/v1beta1
-      kind: ClusterConfig
-      metadata:
-        name: my-k0s-cluster
-      spec:
-        api:
-          extraArgs:
-            anonymous-auth: "true"
-  options:
-    wait:
-      enabled: true
-    timeout: 120s
-`
+// k0daConfig was unused and removed to fix linter warning
 
 func findHostContainerRuntime(t *testing.T) string {
 	if _, err := exec.LookPath("docker"); err == nil {

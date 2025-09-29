@@ -76,7 +76,7 @@ func AllocateHostPort(hostIP string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	defer ln.Close()
+	defer func() { _ = ln.Close() }()
 	if ta, ok := ln.Addr().(*net.TCPAddr); ok {
 		return ta.Port, nil
 	}
@@ -235,7 +235,7 @@ func copyManifestsToDir(paths []string, baseDir string, destDir string) error {
 			if err != nil {
 				return err
 			}
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 
 			if resp.StatusCode != http.StatusOK {
 				return fmt.Errorf("bad status: %s", resp.Status)

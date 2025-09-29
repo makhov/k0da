@@ -20,7 +20,7 @@ func FetchStableK0sVersion(client *http.Client) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("fetch stable version: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return "", fmt.Errorf("fetch stable version: unexpected status %d", resp.StatusCode)
 	}

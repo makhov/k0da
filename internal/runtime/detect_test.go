@@ -24,10 +24,10 @@ func TestNormalizeSocket(t *testing.T) {
 func TestGetDockerSocketCandidates(t *testing.T) {
 	// Test with empty HOME
 	oldHome := os.Getenv("HOME")
-	os.Unsetenv("HOME")
+	_ = os.Unsetenv("HOME")
 	defer func() {
 		if oldHome != "" {
-			os.Setenv("HOME", oldHome)
+			_ = os.Setenv("HOME", oldHome)
 		}
 	}()
 
@@ -40,7 +40,7 @@ func TestGetDockerSocketCandidates(t *testing.T) {
 	}
 
 	// Test with HOME set
-	os.Setenv("HOME", "/tmp")
+	_ = os.Setenv("HOME", "/tmp")
 	candidates = getDockerSocketCandidates()
 	if len(candidates) != 8 {
 		t.Errorf("Expected 8 candidates with HOME set, got %d", len(candidates))
@@ -71,10 +71,10 @@ func TestGetDockerSocketCandidates(t *testing.T) {
 func TestTryDockerSocketCandidates(t *testing.T) {
 	// Test with empty HOME
 	oldHome := os.Getenv("HOME")
-	os.Unsetenv("HOME")
+	_ = os.Unsetenv("HOME")
 	defer func() {
 		if oldHome != "" {
-			os.Setenv("HOME", oldHome)
+			_ = os.Setenv("HOME", oldHome)
 		}
 	}()
 
@@ -85,7 +85,7 @@ func TestTryDockerSocketCandidates(t *testing.T) {
 	}
 
 	// Test with HOME set but no socket files
-	os.Setenv("HOME", "/tmp")
+	_ = os.Setenv("HOME", "/tmp")
 	result = tryDockerSocketCandidates()
 	if result != "" {
 		t.Errorf("tryDockerSocketCandidates() with no socket files should return empty string, got %q", result)
@@ -93,12 +93,12 @@ func TestTryDockerSocketCandidates(t *testing.T) {
 
 	// Test with HOME set and socket file exists (but not reachable)
 	home := "/tmp"
-	os.Setenv("HOME", home)
+	_ = os.Setenv("HOME", home)
 	colimaDir := filepath.Join(home, ".colima", "default")
 	if err := os.MkdirAll(colimaDir, 0755); err != nil {
 		t.Fatalf("Failed to create test directory: %v", err)
 	}
-	defer os.RemoveAll(filepath.Join(home, ".colima"))
+	defer func() { _ = os.RemoveAll(filepath.Join(home, ".colima")) }()
 
 	socketPath := filepath.Join(colimaDir, "docker.sock")
 	if err := os.WriteFile(socketPath, []byte(""), 0644); err != nil {

@@ -14,8 +14,8 @@ func TestKubeconfigCommand(t *testing.T) {
 	// Create a temporary directory for testing
 	tempDir := t.TempDir()
 	originalHome := os.Getenv("HOME")
-	os.Setenv("HOME", tempDir)
-	defer os.Setenv("HOME", originalHome)
+	_ = os.Setenv("HOME", tempDir)
+	defer func() { _ = os.Setenv("HOME", originalHome) }()
 
 	// Create the unified kubeconfig directory
 	kubeconfigDir := filepath.Join(tempDir, ".k0da", "clusters")
@@ -70,7 +70,7 @@ func TestKubeconfigCommand(t *testing.T) {
 	os.Stdout = w
 
 	err = runKubeconfig(kubeconfigCmd, []string{})
-	w.Close()
+	_ = w.Close()
 
 	// Read output
 	output := make([]byte, 1024)
@@ -93,8 +93,8 @@ func TestKubeconfigCommandClusterNotFound(t *testing.T) {
 	// Create a temporary directory for testing
 	tempDir := t.TempDir()
 	originalHome := os.Getenv("HOME")
-	os.Setenv("HOME", tempDir)
-	defer os.Setenv("HOME", originalHome)
+	_ = os.Setenv("HOME", tempDir)
+	defer func() { _ = os.Setenv("HOME", originalHome) }()
 
 	// Create the unified kubeconfig directory
 	kubeconfigDir := filepath.Join(tempDir, ".k0da", "clusters")
@@ -128,8 +128,8 @@ func TestKubeconfigCommandNoUnifiedKubeconfig(t *testing.T) {
 	// Create a temporary directory for testing
 	tempDir := t.TempDir()
 	originalHome := os.Getenv("HOME")
-	os.Setenv("HOME", tempDir)
-	defer os.Setenv("HOME", originalHome)
+	_ = os.Setenv("HOME", tempDir)
+	defer func() { _ = os.Setenv("HOME", originalHome) }()
 
 	// Test the kubeconfig command when no unified kubeconfig exists
 	kubeconfigClusterName = "test-cluster"

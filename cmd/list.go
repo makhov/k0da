@@ -117,18 +117,18 @@ func printSimpleList(clusters []ClusterInfo) {
 	fmt.Printf("Found %d k0da cluster(s):\n\n", len(clusters))
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "NAME\tSTATUS\tPORTS\tIMAGE")
-	fmt.Fprintln(w, "----\t------\t-----\t-----")
+	_, _ = fmt.Fprintln(w, "NAME\tSTATUS\tPORTS\tIMAGE")
+	_, _ = fmt.Fprintln(w, "----\t------\t-----\t-----")
 
 	for _, cluster := range clusters {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n",
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\n",
 			cluster.Name,
 			cluster.Status,
 			cluster.Ports,
 			cluster.Image)
 	}
 
-	w.Flush()
+	_ = w.Flush()
 }
 
 func printVerboseList(clusters []ClusterInfo) {

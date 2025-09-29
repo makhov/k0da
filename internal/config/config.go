@@ -1,3 +1,4 @@
+// Package config provides configuration management for k0da clusters.
 package config
 
 import (

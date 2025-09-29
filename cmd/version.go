@@ -20,14 +20,14 @@ var versionCmd = &cobra.Command{
 	Short: "Print version information",
 	Run: func(cmd *cobra.Command, args []string) {
 		w := cmd.OutOrStdout()
-		fmt.Fprintf(w, "k0da %s", Version)
+		_, _ = fmt.Fprintf(w, "k0da %s", Version)
 		if Commit != "" {
-			fmt.Fprintf(w, " (commit %s)", Commit)
+			_, _ = fmt.Fprintf(w, " (commit %s)", Commit)
 		}
 		if BuildDate != "" {
-			fmt.Fprintf(w, " built %s", BuildDate)
+			_, _ = fmt.Fprintf(w, " built %s", BuildDate)
 		}
-		fmt.Fprintln(w)
+		_, _ = fmt.Fprintln(w)
 
 		if check, _ := cmd.Flags().GetBool("check-latest"); check {
 			client := &http.Client{Timeout: 3 * time.Second}
@@ -35,12 +35,12 @@ var versionCmd = &cobra.Command{
 				stableTag := k0daconfig.StableVersionAsImageTag(stable)
 				current := k0daconfig.NormalizeVersionTag(k0daconfig.DefaultK0sVersion)
 				if stableTag != current {
-					fmt.Fprintf(w, "A newer stable k0s exists: %s (current default: %s)\n", stableTag, current)
+					_, _ = fmt.Fprintf(w, "A newer stable k0s exists: %s (current default: %s)\n", stableTag, current)
 				} else {
-					fmt.Fprintln(w, "Default k0s version is up to date with stable.")
+					_, _ = fmt.Fprintln(w, "Default k0s version is up to date with stable.")
 				}
 			} else {
-				fmt.Fprintf(w, "Failed to check latest k0s version: %v\n", err)
+				_, _ = fmt.Fprintf(w, "Failed to check latest k0s version: %v\n", err)
 			}
 		}
 	},

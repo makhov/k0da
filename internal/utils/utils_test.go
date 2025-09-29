@@ -23,36 +23,36 @@ type fakeRuntime struct {
 }
 
 func (f *fakeRuntime) Name() string { return "fake" }
-func (f *fakeRuntime) RunContainer(ctx context.Context, opts runtime.RunContainerOptions) (string, error) {
+func (f *fakeRuntime) RunContainer(_ context.Context, _ runtime.RunContainerOptions) (string, error) {
 	return "", nil
 }
-func (f *fakeRuntime) ContainerExists(ctx context.Context, name string) (bool, error) {
+func (f *fakeRuntime) ContainerExists(_ context.Context, _ string) (bool, error) {
 	return true, nil
 }
-func (f *fakeRuntime) ContainerIsRunning(ctx context.Context, name string) (bool, error) {
+func (f *fakeRuntime) ContainerIsRunning(_ context.Context, _ string) (bool, error) {
 	return true, nil
 }
-func (f *fakeRuntime) StopContainer(ctx context.Context, name string) error   { return nil }
-func (f *fakeRuntime) RemoveContainer(ctx context.Context, name string) error { return nil }
-func (f *fakeRuntime) ExecInContainer(ctx context.Context, name string, command []string) (string, int, error) {
+func (f *fakeRuntime) StopContainer(_ context.Context, _ string) error   { return nil }
+func (f *fakeRuntime) RemoveContainer(_ context.Context, _ string) error { return nil }
+func (f *fakeRuntime) ExecInContainer(_ context.Context, _ string, _ []string) (string, int, error) {
 	return f.execStdout, f.execExitCode, f.execErr
 }
-func (f *fakeRuntime) GetPortMapping(ctx context.Context, name string, containerPort int, protocol string) (string, int, error) {
+func (f *fakeRuntime) GetPortMapping(_ context.Context, _ string, _ int, _ string) (string, int, error) {
 	return f.portIP, f.port, f.portErr
 }
-func (f *fakeRuntime) VolumeExists(ctx context.Context, name string) (bool, error) { return false, nil }
-func (f *fakeRuntime) RemoveVolume(ctx context.Context, name string) error         { return nil }
-func (f *fakeRuntime) ListContainersByLabel(ctx context.Context, labelSelector map[string]string, includeStopped bool) ([]runtime.ContainerInfo, error) {
+func (f *fakeRuntime) VolumeExists(_ context.Context, _ string) (bool, error) { return false, nil }
+func (f *fakeRuntime) RemoveVolume(_ context.Context, _ string) error         { return nil }
+func (f *fakeRuntime) ListContainersByLabel(_ context.Context, _ map[string]string, _ bool) ([]runtime.ContainerInfo, error) {
 	return nil, nil
 }
-func (f *fakeRuntime) CopyToContainer(ctx context.Context, name string, srcPath string, dstPath string) error {
+func (f *fakeRuntime) CopyToContainer(_ context.Context, _ string, _ string, _ string) error {
 	return nil
 }
-func (f *fakeRuntime) SaveImageToTar(ctx context.Context, imageRef string, tarPath string) error {
+func (f *fakeRuntime) SaveImageToTar(_ context.Context, _ string, _ string) error {
 	return nil
 }
 
-func (f *fakeRuntime) EnsureNetwork(ctx context.Context, name string) error { return nil }
+func (f *fakeRuntime) EnsureNetwork(_ context.Context, _ string) error { return nil }
 
 func TestWaitForK0sReady_SucceedsImmediately(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)

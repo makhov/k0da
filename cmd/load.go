@@ -92,7 +92,7 @@ func runLoadImage(clusterName, imageRef string) error {
 	if err != nil {
 		return err
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 	tarPath := filepath.Join(tmpDir, "image.tar")
 
 	if err := b.SaveImageToTar(ctx, imageRef, tarPath); err != nil {

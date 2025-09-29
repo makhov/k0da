@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	dockerTypes "github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
 	imageTypes "github.com/docker/docker/api/types/image"
@@ -72,19 +71,14 @@ func (d *Docker) RunContainer(ctx context.Context, opts RunContainerOptions) (st
 		Tmpfs:       opts.Tmpfs,
 	}
 	// Set ulimit memlock unlimited for k0s eBPF
-	if hostConfig.Resources.Ulimits == nil {
-		hostConfig.Resources.Ulimits = []*container.Ulimit{}
+	if hostConfig.Ulimits == nil {
+		hostConfig.Ulimits = []*container.Ulimit{}
 	}
-	hostConfig.Resources.Ulimits = append(hostConfig.Resources.Ulimits, &container.Ulimit{Name: "memlock", Soft: -1, Hard: -1})
+	hostConfig.Ulimits = append(hostConfig.Ulimits, &container.Ulimit{Name: "memlock", Soft: -1, Hard: -1})
 
 	// Use Mounts helper
 	if len(opts.Mounts) > 0 {
 		hostConfig.Binds = opts.Mounts.ToBinds()
-	}
-
-	hostSock := d.socket
-	if strings.HasPrefix(hostSock, "unix://") {
-		hostSock = strings.TrimPrefix(d.socket, "unix://")
 	}
 
 	hostConfig.Binds = append(hostConfig.Binds, "/var/run/docker.sock:/var/run/docker.sock")
@@ -262,7 +256,7 @@ func (d *Docker) SaveImageToTar(ctx context.Context, imageRef string, tarPath st
 
 func atoiSafe(s string) int { n, _ := strconv.Atoi(s); return n }
 
-func formatPorts(ports []dockerTypes.Port) string {
+func formatPorts(ports []container.Port) string {
 	var b strings.Builder
 	for i, p := range ports {
 		if i > 0 {
