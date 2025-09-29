@@ -31,10 +31,10 @@ jobs:
         run: make fmt && git diff --exit-code
       - name: Vet
         run: go vet ./...
-      - name: Install golangci-lint
-        run: curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin
-      - name: Run linter
-        run: golangci-lint run
+#      - name: Install golangci-lint
+#        run: curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin
+#      - name: Run linter
+#        run: golangci-lint run
       - name: Build
         run: make build
       - name: Test

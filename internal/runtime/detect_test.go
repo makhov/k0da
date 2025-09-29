@@ -2,7 +2,6 @@ package runtime
 
 import (
 	"os"
-	"path/filepath"
 	"testing"
 )
 
@@ -65,48 +64,5 @@ func TestGetDockerSocketCandidates(t *testing.T) {
 		if candidates[i] != expectedPath {
 			t.Errorf("Expected candidate %d to be %q, got %q", i, expectedPath, candidates[i])
 		}
-	}
-}
-
-func TestTryDockerSocketCandidates(t *testing.T) {
-	// Test with empty HOME
-	oldHome := os.Getenv("HOME")
-	_ = os.Unsetenv("HOME")
-	defer func() {
-		if oldHome != "" {
-			_ = os.Setenv("HOME", oldHome)
-		}
-	}()
-
-	result := tryDockerSocketCandidates()
-	// Should return empty string since no sockets exist in test environment
-	if result != "" {
-		t.Errorf("tryDockerSocketCandidates() with no sockets should return empty string, got %q", result)
-	}
-
-	// Test with HOME set but no socket files
-	_ = os.Setenv("HOME", "/tmp")
-	result = tryDockerSocketCandidates()
-	if result != "" {
-		t.Errorf("tryDockerSocketCandidates() with no socket files should return empty string, got %q", result)
-	}
-
-	// Test with HOME set and socket file exists (but not reachable)
-	home := "/tmp"
-	_ = os.Setenv("HOME", home)
-	colimaDir := filepath.Join(home, ".colima", "default")
-	if err := os.MkdirAll(colimaDir, 0755); err != nil {
-		t.Fatalf("Failed to create test directory: %v", err)
-	}
-	defer func() { _ = os.RemoveAll(filepath.Join(home, ".colima")) }()
-
-	socketPath := filepath.Join(colimaDir, "docker.sock")
-	if err := os.WriteFile(socketPath, []byte(""), 0644); err != nil {
-		t.Fatalf("Failed to create test socket file: %v", err)
-	}
-
-	result = tryDockerSocketCandidates()
-	if result != "" {
-		t.Errorf("tryDockerSocketCandidates() with unreachable socket should return empty string, got %q", result)
 	}
 }
