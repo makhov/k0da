@@ -111,7 +111,6 @@ func runCreate(cmd *cobra.Command, args []string) error {
 func createK0sCluster(ctx context.Context, b runtime.Runtime, name, image string, wait bool, timeout string, cc *k0daconfig.ClusterConfig) error {
 	containerName := name
 	hostname := name
-	volumeName := fmt.Sprintf("%s-var", name)
 
 	fmt.Printf("Creating container '%s' with image '%s' using %s...\n", containerName, image, b.Name())
 
@@ -123,8 +122,8 @@ func createK0sCluster(ctx context.Context, b runtime.Runtime, name, image string
 
 	// Build mounts
 	mounts := runtime.Mounts{
-		{Type: "volume", Source: fmt.Sprintf("%s", volumeName), Target: "/var"},
-		{Type: "bind", Source: "/lib/modules", Target: "/lib/modules", Options: []string{"ro"}},
+		runtime.Mount{Type: "volume", Source: fmt.Sprintf("%s-var", name), Target: "/var"},
+		runtime.Mount{Type: "bind", Source: "/lib/modules", Target: "/lib/modules", Options: []string{"ro"}},
 	}
 	// Mount manifests directory into k0s manifests path
 	mounts = append(mounts, runtime.Mount{Type: "bind", Source: hostK0daManifestsPath, Target: "/var/lib/k0s/manifests/k0da"})
@@ -253,11 +252,10 @@ func joinAdditionalNodes(ctx context.Context, b runtime.Runtime, clusterName, im
 			}
 		}
 
-		volumeName := fmt.Sprintf("%s-var", nodeName)
 		mounts := runtime.Mounts{
-			{Type: "volume", Source: volumeName, Target: "/var"},
-			{Type: "bind", Source: "/lib/modules", Target: "/lib/modules", Options: []string{"ro"}},
-			{Type: "bind", Source: hostTokenPath, Target: "/etc/k0s/join.token", Options: []string{"ro"}},
+			runtime.Mount{Type: "volume", Source: fmt.Sprintf("%s-var", nodeName), Target: "/var"},
+			runtime.Mount{Type: "bind", Source: "/lib/modules", Target: "/lib/modules", Options: []string{"ro"}},
+			runtime.Mount{Type: "bind", Source: hostTokenPath, Target: "/etc/k0s/join.token", Options: []string{"ro"}},
 		}
 
 		publish := buildPublishPortsFromNode(n)

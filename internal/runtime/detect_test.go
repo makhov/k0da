@@ -42,13 +42,14 @@ func TestGetDockerSocketCandidates(t *testing.T) {
 	// Test with HOME set
 	os.Setenv("HOME", "/tmp")
 	candidates = getDockerSocketCandidates()
-	if len(candidates) != 7 {
-		t.Errorf("Expected 7 candidates with HOME set, got %d", len(candidates))
+	if len(candidates) != 8 {
+		t.Errorf("Expected 8 candidates with HOME set, got %d", len(candidates))
 	}
 
 	// Check that we have the expected paths
 	expectedPaths := []string{
 		"/var/run/docker.sock",
+		"/tmp/.colima/docker.sock",
 		"/tmp/.colima/default/docker.sock",
 		"/tmp/.orbstack/run/docker.sock",
 		"/tmp/.lima/default/sock/docker.sock",

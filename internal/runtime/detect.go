@@ -64,6 +64,15 @@ func getDockerSocketCandidates() []string {
 	home := os.Getenv("HOME")
 	candidates := []string{"/var/run/docker.sock"}
 
+	if host := os.Getenv("DOCKER_HOST"); host != "" {
+		if strings.HasPrefix(host, "unix://") {
+			path := strings.TrimPrefix(host, "unix://")
+			if path != "" && path != "/var/run/docker.sock" {
+				candidates = append([]string{path}, candidates...)
+			}
+		}
+	}
+
 	// Add user-specific candidates if HOME is available
 	if home != "" {
 		candidates = append(candidates, []string{
@@ -87,15 +96,28 @@ func tryDockerSocketCandidates() string {
 
 	for _, socketPath := range candidates {
 		if _, err := os.Stat(socketPath); err == nil {
-			// Probe reachability (connection refused -> skip)
-			conn, err := net.DialTimeout("unix", socketPath, 500*time.Millisecond)
-			if err == nil {
-				_ = conn.Close()
+			// Probe reachability with timeout and retry
+			if isSocketReachable(socketPath, 3) {
 				return "unix://" + socketPath
 			}
 		}
 	}
 	return ""
+}
+
+// isSocketReachable tests socket connectivity with retries
+func isSocketReachable(socketPath string, maxRetries int) bool {
+	for i := 0; i < maxRetries; i++ {
+		conn, err := net.DialTimeout("unix", socketPath, 500*time.Millisecond)
+		if err == nil {
+			_ = conn.Close()
+			return true
+		}
+		if i < maxRetries-1 {
+			time.Sleep(100 * time.Millisecond)
+		}
+	}
+	return false
 }
 
 // tryPodmanConnectionList queries `podman system connection list --format json`
@@ -272,5 +294,5 @@ func Detect(ctx context.Context, opts DetectOptions) (Runtime, error) {
 	if b, err := NewPodmanRuntime(ctx, socket, identity); err == nil {
 		return b, nil
 	}
-	return nil, fmt.Errorf("no supported container runtime detected; set K0DA_RUNTIME=docker|podman or configure socket")
+	return nil, fmt.Errorf("no supported container runtime detected. Please set K0DA_RUNTIME=docker|podman and K0DA_SOCKET=<socket-path> to override detection")
 }

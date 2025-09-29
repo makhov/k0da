@@ -2,21 +2,11 @@
 
 🚀 k0da (/ˈkoʊdə/) is a small CLI for creating and managing local Kubernetes clusters using k0s.
 
-Yes, it's like kind, but powered by k0s.
-
 ## Features
 
 - Lightweight and fast
-- Full k0s support with all it's features
+- Full k0s support with all its features
 - Works with Docker or Podman
-
-## Prerequisites
-
-- Go 1.23+
-- Docker or Podman
-- kubectl
-
-Tip (Podman on macOS): use a rootful machine (`podman machine set --rootful && podman machine stop && podman machine start`).
 
 ## Install
 
@@ -41,18 +31,19 @@ go build -o k0da
 
 ```bash
 # Create a cluster with defaults
-$ k0da create
+k0da create
 
 # Create a named cluster
-$ k0da create --name my-cluster
+k0da create my-cluster
+# or
+k0da create --name my-cluster
 
 # List clusters
-$ k0da list
+k0da list
 
 # Delete a cluster
-$ k0da delete -n my-cluster
-
-$ k0da --help
+k0da delete my-cluster
+```
 k0da is a CLI utility similar to kind but opinionated and based on k0s.
 It provides an easy way to create and manage lightweight Kubernetes clusters
 using k0s as the distribution.

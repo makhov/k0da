@@ -159,11 +159,13 @@ func buildTestImage(t *testing.T, runtime string, tag string) {
 	}
 	switch runtime {
 	case "docker":
-		if out, code := runCmd(t, "docker", append([]string{"build", "-t", tag, dir})...); code != 0 {
+		buildArgs := append([]string{"build", "-t", tag}, dir)
+		if out, code := runCmd(t, "docker", buildArgs...); code != 0 {
 			t.Skipf("docker build failed (%d):\n%s", code, out)
 		}
 	case "podman":
-		if out, code := runCmd(t, "podman", append([]string{"build", "-t", tag, dir})...); code != 0 {
+		buildArgs := append([]string{"build", "-t", tag}, dir)
+		if out, code := runCmd(t, "podman", buildArgs...); code != 0 {
 			t.Skipf("podman build failed (%d):\n%s", code, out)
 		}
 	}
