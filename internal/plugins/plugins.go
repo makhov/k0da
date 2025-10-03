@@ -4,6 +4,7 @@ import (
 	"embed"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 )
@@ -68,7 +69,7 @@ func ExtractPlugins() ([]string, error) {
 		fi, _ := entry.Info()
 
 		// Read the embedded file
-		filePath := filepath.Join("embedded", entry.Name())
+		filePath := path.Join("embedded", entry.Name())
 		data, err := pluginFS.ReadFile(filePath)
 		if err != nil {
 			return nil, fmt.Errorf("failed to read embedded file %s: %w", filePath, err)

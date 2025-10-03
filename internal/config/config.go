@@ -188,7 +188,8 @@ func (c *ClusterConfig) MaybeWriteInlineK0sConfig(dir string) (string, error) {
 }
 
 func (c *ClusterConfig) ClusterDir(clusterName string) string {
-	return filepath.Join(os.Getenv("HOME"), ".k0da", "clusters", clusterName)
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".k0da", "clusters", clusterName)
 }
 
 func (c *ClusterConfig) ConfigDir(clusterName string) string {

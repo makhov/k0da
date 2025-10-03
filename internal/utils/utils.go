@@ -211,7 +211,7 @@ func isURL(str string) bool {
 	if err != nil {
 		return false
 	}
-	return u.Scheme != ""
+	return u.Scheme == "https" || u.Scheme == "http"
 }
 
 func urlBase(str string) string {
