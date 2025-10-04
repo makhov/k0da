@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 )
@@ -24,19 +25,6 @@ func getenv(keys ...string) (string, bool) {
 		}
 	}
 	return "", false
-}
-
-func normalizeSocket(s string) string {
-	if s == "" {
-		return s
-	}
-	if strings.HasPrefix(s, "/") {
-		return "unix://" + s
-	}
-	if strings.HasPrefix(s, "unix:/") && !strings.HasPrefix(s, "unix:///") {
-		return "unix://" + strings.TrimPrefix(s, "unix:")
-	}
-	return s
 }
 
 // tryPodmanMacTmpdirSocket checks $TMPDIR/podman/podman-machine-default.sock
@@ -58,47 +46,31 @@ func tryPodmanMacTmpdirSocket() string {
 	return ""
 }
 
-// getDockerSocketCandidates returns a list of potential Docker socket paths
-// ordered by preference (most common/reliable first).
-func getDockerSocketCandidates() []string {
-	home := os.Getenv("HOME")
-	candidates := []string{"/var/run/docker.sock"}
-
-	if host := os.Getenv("DOCKER_HOST"); host != "" {
-		if strings.HasPrefix(host, "unix://") {
-			path := strings.TrimPrefix(host, "unix://")
-			if path != "" && path != "/var/run/docker.sock" {
-				candidates = append([]string{path}, candidates...)
-			}
-		}
-	}
-
-	// Add user-specific candidates if HOME is available
-	if home != "" {
-		candidates = append(candidates, []string{
-			filepath.Join(home, ".colima", "docker.sock"),
-			filepath.Join(home, ".colima", "default", "docker.sock"),
-			filepath.Join(home, ".orbstack", "run", "docker.sock"),
-			filepath.Join(home, ".lima", "default", "sock", "docker.sock"),
-			filepath.Join(home, "Library", "Containers", "com.docker.docker", "Data", "vms", "0", "docker.sock"),
-			filepath.Join(home, ".rd", "docker.sock"),
-			filepath.Join(home, ".local", "share", "containers", "podman", "machine", "podman-machine-default", "podman.sock"),
-		}...)
-	}
-
-	return candidates
-}
-
 // tryDockerSocketCandidates checks all Docker socket candidates and returns
 // the first one that exists and is reachable, or empty string if none found.
-func tryDockerSocketCandidates() string {
-	candidates := getDockerSocketCandidates()
-
-	for _, socketPath := range candidates {
-		if _, err := os.Stat(socketPath); err == nil {
-			// Probe reachability with timeout and retry
-			if isSocketReachable(socketPath, 3) {
-				return "unix://" + socketPath
+// tryDockerSocketCandidates returns the first reachable Docker socket and its proto, or empty string if none found.
+func tryDockerSocketCandidates() (socket string) {
+	if runtime.GOOS == "windows" {
+		return "npipe:////./pipe/docker_engine"
+	}
+	home := os.Getenv("HOME")
+	candidates := []string{"unix:///var/run/docker.sock"}
+	if home != "" {
+		candidates = append(candidates,
+			"unix://"+filepath.Join(home, ".colima", "docker.sock"),
+			"unix://"+filepath.Join(home, ".colima", "default", "docker.sock"),
+			"unix://"+filepath.Join(home, ".orbstack", "run", "docker.sock"),
+			"unix://"+filepath.Join(home, ".lima", "default", "sock", "docker.sock"),
+			"unix://"+filepath.Join(home, "Library", "Containers", "com.docker.docker", "Data", "vms", "0", "docker.sock"),
+			"unix://"+filepath.Join(home, ".rd", "docker.sock"),
+			"unix://"+filepath.Join(home, ".local", "share", "containers", "podman", "machine", "podman-machine-default", "podman.sock"),
+		)
+	}
+	for _, socket := range candidates {
+		path := strings.TrimPrefix(socket, "unix://")
+		if _, err := os.Stat(path); err == nil {
+			if isSocketReachable("unix", path, 3) {
+				return socket
 			}
 		}
 	}
@@ -106,9 +78,9 @@ func tryDockerSocketCandidates() string {
 }
 
 // isSocketReachable tests socket connectivity with retries
-func isSocketReachable(socketPath string, maxRetries int) bool {
+func isSocketReachable(proto, socketPath string, maxRetries int) bool {
 	for i := 0; i < maxRetries; i++ {
-		conn, err := net.DialTimeout("unix", socketPath, 500*time.Millisecond)
+		conn, err := net.DialTimeout(proto, socketPath, 500*time.Millisecond)
 		if err == nil {
 			_ = conn.Close()
 			return true
@@ -250,8 +222,7 @@ func Detect(ctx context.Context, opts DetectOptions) (Runtime, error) {
 			}
 		}
 	}
-	// Normalize final socket before use
-	socket = normalizeSocket(socket)
+	// All socket candidates already have protocol
 
 	// If using Podman on macOS and machine is rootless but we selected a rootless connection, check for rootful alternative
 	if runtime == "podman" {
