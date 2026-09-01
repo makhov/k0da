@@ -61,7 +61,20 @@ func isK0sReady(ctx context.Context, r runtime.Runtime, containerName string) bo
 	if err != nil || exit != 0 {
 		return false
 	}
-	return strings.Contains(stdout, "Kube-api probing successful: true")
+	if !strings.Contains(stdout, "Kube-api probing successful: true") {
+		return false
+	}
+	// Kube-api answers before containerd, which comes up as a worker component.
+	// Commands like `k0da load` talk to containerd directly, so a node is not
+	// usable until its socket answers too.
+	return isContainerdReady(ctx, r, containerName)
+}
+
+// isContainerdReady reports whether the node containerd is accepting connections.
+// `k0s ctr` resolves the socket path itself, so this stays correct if k0s moves it.
+func isContainerdReady(ctx context.Context, r runtime.Runtime, containerName string) bool {
+	_, exit, err := r.ExecInContainer(ctx, containerName, []string{"k0s", "ctr", "version"})
+	return err == nil && exit == 0
 }
 
 // AllocateHostPort reserves a free TCP port on the given host IP (defaults to 0.0.0.0).

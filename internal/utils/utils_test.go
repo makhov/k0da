@@ -17,6 +17,9 @@ type fakeRuntime struct {
 	execExitCode int
 	execErr      error
 
+	// execFunc, when set, takes precedence and lets a test answer per command.
+	execFunc func(args []string) (string, int, error)
+
 	portIP  string
 	port    int
 	portErr error
@@ -34,7 +37,10 @@ func (f *fakeRuntime) ContainerIsRunning(_ context.Context, _ string) (bool, err
 }
 func (f *fakeRuntime) StopContainer(_ context.Context, _ string) error   { return nil }
 func (f *fakeRuntime) RemoveContainer(_ context.Context, _ string) error { return nil }
-func (f *fakeRuntime) ExecInContainer(_ context.Context, _ string, _ []string) (string, int, error) {
+func (f *fakeRuntime) ExecInContainer(_ context.Context, _ string, args []string) (string, int, error) {
+	if f.execFunc != nil {
+		return f.execFunc(args)
+	}
 	return f.execStdout, f.execExitCode, f.execErr
 }
 func (f *fakeRuntime) GetPortMapping(_ context.Context, _ string, _ int, _ string) (string, int, error) {
@@ -118,4 +124,46 @@ func TestGetContainerPort(t *testing.T) {
 	port, err := GetContainerPort(context.Background(), r, "any")
 	require.NoError(t, err)
 	require.Equal(t, "60000", port)
+}
+
+// Regression: kube-api answers before containerd is up. Reporting the cluster
+// ready at that point makes `k0da load` fail with
+// "cannot access socket /run/k0s/containerd.sock".
+func TestWaitForK0sReady_WaitsForContainerd(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	r := &fakeRuntime{
+		execFunc: func(args []string) (string, int, error) {
+			if len(args) > 1 && args[1] == "ctr" {
+				return "Error: cannot access socket /run/k0s/containerd.sock", 1, nil
+			}
+			return "Kube-api probing successful: true\n", 0, nil
+		},
+	}
+
+	err := WaitForK0sReady(ctx, r, "test", "1s")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "timeout waiting for cluster to be ready")
+}
+
+func TestWaitForK0sReady_SucceedsOnceContainerdIsUp(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var ctrCalls int
+	r := &fakeRuntime{
+		execFunc: func(args []string) (string, int, error) {
+			if len(args) > 1 && args[1] == "ctr" {
+				ctrCalls++
+				if ctrCalls < 2 {
+					return "Error: cannot access socket /run/k0s/containerd.sock", 1, nil
+				}
+				return "Server:\n  Version: 2.3.4", 0, nil
+			}
+			return "Kube-api probing successful: true\n", 0, nil
+		},
+	}
+
+	require.NoError(t, WaitForK0sReady(ctx, r, "test", "10s"))
 }
