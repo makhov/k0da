@@ -1,0 +1,35 @@
+version: 2
+
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps"
+    groups:
+      # Docker SDK pulls in a large indirect tree; bumping it piecemeal is noise.
+      docker:
+        patterns:
+          - "github.com/docker/*"
+          - "github.com/moby/*"
+          - "github.com/containerd/*"
+      go-minor-patch:
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: "ci"
+    groups:
+      actions:
+        update-types:
+          - minor
+          - patch
