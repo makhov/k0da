@@ -78,7 +78,7 @@ You should see output similar to:
 k0da version v1.0.0
 commit: abc123def
 built: 2024-01-15T10:30:00Z
-go version: go1.23.0
+go version: go1.27.0
 ```
 
 ## Container Runtime Setup
@@ -163,7 +163,7 @@ sudo usermod -aG docker $USER
 
 #### Go Build Issues
 
-Ensure you have Go 1.23+ installed:
+Ensure you have Go 1.27+ installed:
 
 ```bash
 go version

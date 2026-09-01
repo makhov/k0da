@@ -1,8 +1,6 @@
 module github.com/makhov/k0da
 
-go 1.23.3
-
-toolchain go1.23.5
+go 1.27.0
 
 require (
 	github.com/docker/docker v28.3.2+incompatible
