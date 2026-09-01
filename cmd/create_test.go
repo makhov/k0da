@@ -27,7 +27,7 @@ func TestBuildK0sControllerArgs(t *testing.T) {
 			isPrimary: true,
 			expected: []string{
 				"k0s", "controller",
-				"--enable-dynamic-config", "--disable-components=metrics-server",
+				"--enable-dynamic-config", "--disable-components=metrics-server", "--ignore-pre-flight-checks",
 				"--single", "--config", "/etc/k0s/k0s.yaml",
 			},
 		},
@@ -46,7 +46,7 @@ func TestBuildK0sControllerArgs(t *testing.T) {
 			isPrimary: true,
 			expected: []string{
 				"k0s", "controller",
-				"--enable-dynamic-config", "--disable-components=metrics-server",
+				"--enable-dynamic-config", "--disable-components=metrics-server", "--ignore-pre-flight-checks",
 				"--enable-worker", "--no-taints",
 				"--config", "/etc/k0s/k0s.yaml",
 			},
@@ -66,7 +66,7 @@ func TestBuildK0sControllerArgs(t *testing.T) {
 			isPrimary: false,
 			expected: []string{
 				"k0s", "controller",
-				"--enable-dynamic-config", "--disable-components=metrics-server",
+				"--enable-dynamic-config", "--disable-components=metrics-server", "--ignore-pre-flight-checks",
 				"--enable-worker", "--no-taints",
 				"--token-file", "/etc/k0s/join.token",
 				"--config", "/etc/k0s/k0s.yaml",
@@ -86,7 +86,7 @@ func TestBuildK0sControllerArgs(t *testing.T) {
 			isPrimary: true,
 			expected: []string{
 				"k0s", "controller",
-				"--enable-dynamic-config", "--disable-components=metrics-server",
+				"--enable-dynamic-config", "--disable-components=metrics-server", "--ignore-pre-flight-checks",
 				"--single",
 				"--config", "/etc/k0s/k0s.yaml",
 				"--debug", "--data-dir=/custom/data",
@@ -108,7 +108,7 @@ func TestBuildK0sControllerArgs(t *testing.T) {
 			isPrimary: true,
 			expected: []string{
 				"k0s", "controller",
-				"--enable-dynamic-config", "--disable-components=metrics-server",
+				"--enable-dynamic-config", "--disable-components=metrics-server", "--ignore-pre-flight-checks",
 				"--single",
 				"--config", "/etc/k0s/k0s.yaml",
 				"--custom-arg=value", "--another-arg",
@@ -132,7 +132,7 @@ func TestBuildK0sControllerArgs(t *testing.T) {
 			isPrimary: true,
 			expected: []string{
 				"k0s", "controller",
-				"--enable-dynamic-config", "--disable-components=metrics-server",
+				"--enable-dynamic-config", "--disable-components=metrics-server", "--ignore-pre-flight-checks",
 				"--single",
 				"--config", "/etc/k0s/k0s.yaml",
 				"--global-arg=value",
@@ -160,7 +160,7 @@ func TestBuildK0sControllerArgs(t *testing.T) {
 			isPrimary: false,
 			expected: []string{
 				"k0s", "controller",
-				"--enable-dynamic-config", "--disable-components=metrics-server",
+				"--enable-dynamic-config", "--disable-components=metrics-server", "--ignore-pre-flight-checks",
 				"--enable-worker", "--no-taints",
 				"--token-file", "/etc/k0s/join.token",
 				"--config", "/etc/k0s/k0s.yaml",
@@ -180,7 +180,7 @@ func TestBuildK0sControllerArgs(t *testing.T) {
 			isPrimary: true,
 			expected: []string{
 				"k0s", "controller",
-				"--enable-dynamic-config", "--disable-components=metrics-server",
+				"--enable-dynamic-config", "--disable-components=metrics-server", "--ignore-pre-flight-checks",
 				"--single",
 				"--config", "/etc/k0s/k0s.yaml",
 			},
@@ -203,7 +203,7 @@ func TestBuildK0sControllerArgs(t *testing.T) {
 			isPrimary: true,
 			expected: []string{
 				"k0s", "controller",
-				"--enable-dynamic-config", "--disable-components=metrics-server",
+				"--enable-dynamic-config", "--disable-components=metrics-server", "--ignore-pre-flight-checks",
 				"--single",
 				"--config", "/etc/k0s/k0s.yaml",
 			},

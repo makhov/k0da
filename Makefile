@@ -23,8 +23,9 @@ endif
 build:
 	go build -trimpath -ldflags "$(LDFLAGS)" -o $(BINARY) .
 
+# All packages except e2e, which needs Docker and a built binary (see test-e2e).
 test:
-	go test ./internal/...
+	go test $$(go list ./... | grep -v '/e2e$$')
 
 test-e2e:
 	$(MAKE) build

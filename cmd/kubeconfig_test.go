@@ -18,7 +18,7 @@ func TestKubeconfigCommand(t *testing.T) {
 	defer func() { _ = os.Setenv("HOME", originalHome) }()
 
 	// Create the unified kubeconfig directory
-	kubeconfigDir := filepath.Join(tempDir, ".k0da", "clusters")
+	kubeconfigDir := filepath.Join(tempDir, ".kube")
 	err := os.MkdirAll(kubeconfigDir, 0755)
 	require.NoError(t, err)
 
@@ -57,7 +57,7 @@ func TestKubeconfigCommand(t *testing.T) {
 	}
 
 	// Save the unified kubeconfig
-	unifiedKubeconfigPath := filepath.Join(kubeconfigDir, "kubeconfig")
+	unifiedKubeconfigPath := filepath.Join(kubeconfigDir, "config")
 	err = utils.SaveKubeconfig(unifiedKubeconfig, unifiedKubeconfigPath)
 	require.NoError(t, err)
 
@@ -97,7 +97,7 @@ func TestKubeconfigCommandClusterNotFound(t *testing.T) {
 	defer func() { _ = os.Setenv("HOME", originalHome) }()
 
 	// Create the unified kubeconfig directory
-	kubeconfigDir := filepath.Join(tempDir, ".k0da", "clusters")
+	kubeconfigDir := filepath.Join(tempDir, ".kube")
 	err := os.MkdirAll(kubeconfigDir, 0755)
 	require.NoError(t, err)
 
@@ -112,7 +112,7 @@ func TestKubeconfigCommandClusterNotFound(t *testing.T) {
 	}
 
 	// Save the unified kubeconfig
-	unifiedKubeconfigPath := filepath.Join(kubeconfigDir, "kubeconfig")
+	unifiedKubeconfigPath := filepath.Join(kubeconfigDir, "config")
 	err = utils.SaveKubeconfig(unifiedKubeconfig, unifiedKubeconfigPath)
 	require.NoError(t, err)
 
