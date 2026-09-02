@@ -79,6 +79,14 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	rootless, err := r.IsRootless(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to determine whether %s is rootless: %w", r.Name(), err)
+	}
+	if rootless {
+		fmt.Printf("Rootless %s detected; enabling user-namespace settings for kubelet and containerd\n", r.Name())
+	}
+
 	// Create cluster directory
 	clusterDir := cc.ClusterDir(clusterName)
 	if err := os.MkdirAll(clusterDir, 0755); err != nil {
@@ -91,13 +99,13 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create the primary node/container using backend
-	if err := createK0sCluster(ctx, r, clusterName, finalImage, wait, timeout, cc); err != nil {
+	if err := createK0sCluster(ctx, r, clusterName, finalImage, wait, timeout, cc, rootless); err != nil {
 		return fmt.Errorf("failed to create k0s cluster: %w", err)
 	}
 
 	// If multinode defined, join additional nodes to the primary
 	if len(cc.Spec.Nodes) > 1 {
-		if err := joinAdditionalNodes(ctx, r, clusterName, image, wait, timeout, cc); err != nil {
+		if err := joinAdditionalNodes(ctx, r, clusterName, image, wait, timeout, cc, rootless); err != nil {
 			return fmt.Errorf("failed to join additional nodes: %w", err)
 		}
 	}
@@ -108,7 +116,7 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func createK0sCluster(ctx context.Context, b runtime.Runtime, name, image string, wait bool, timeout string, cc *k0daconfig.ClusterConfig) error {
+func createK0sCluster(ctx context.Context, b runtime.Runtime, name, image string, wait bool, timeout string, cc *k0daconfig.ClusterConfig, rootless bool) error {
 	containerName := name
 	hostname := name
 
@@ -139,6 +147,16 @@ func createK0sCluster(ctx context.Context, b runtime.Runtime, name, image string
 
 	// Build command args
 	cmdArgs := buildK0sControllerArgs(cc, node, true)
+
+	if rootless {
+		var rootlessMount runtime.Mount
+		var err error
+		cmdArgs, rootlessMount, err = rootlessNodeAdjustments(cc, name, cmdArgs)
+		if err != nil {
+			return err
+		}
+		mounts = append(mounts, rootlessMount)
+	}
 
 	// Ports, Env, Labels
 	publish := buildPublishPortsFromNode(node)
@@ -199,7 +217,7 @@ func createK0sCluster(ctx context.Context, b runtime.Runtime, name, image string
 }
 
 // joinAdditionalNodes creates tokens on the primary node and starts additional nodes defined in the config.
-func joinAdditionalNodes(ctx context.Context, b runtime.Runtime, clusterName, image string, wait bool, timeout string, cc *k0daconfig.ClusterConfig) error {
+func joinAdditionalNodes(ctx context.Context, b runtime.Runtime, clusterName, image string, wait bool, timeout string, cc *k0daconfig.ClusterConfig, rootless bool) error {
 	primary := clusterName
 	clusterDir := filepath.Join(os.Getenv("HOME"), ".k0da", "clusters", clusterName)
 	tokensDir := filepath.Join(clusterDir, "tokens")
@@ -258,6 +276,16 @@ func joinAdditionalNodes(ctx context.Context, b runtime.Runtime, clusterName, im
 			runtime.Mount{Type: "bind", Source: hostTokenPath, Target: "/etc/k0s/join.token", Options: []string{"ro"}},
 		}
 
+		if rootless {
+			var rootlessMount runtime.Mount
+			var err error
+			cmdArgs, rootlessMount, err = rootlessNodeAdjustments(cc, clusterName, cmdArgs)
+			if err != nil {
+				return err
+			}
+			mounts = append(mounts, rootlessMount)
+		}
+
 		publish := buildPublishPortsFromNode(n)
 		// Env, Labels
 		env := buildEnvFromNode(n)
@@ -295,6 +323,31 @@ func joinAdditionalNodes(ctx context.Context, b runtime.Runtime, clusterName, im
 		}
 	}
 	return nil
+}
+
+// rootlessNodeAdjustments returns the k0s args and the extra mount a node needs
+// on a rootless runtime: the kubelet must tolerate its user namespace, and
+// containerd must stop asking runc to lower oom_score_adj.
+func rootlessNodeAdjustments(cc *k0daconfig.ClusterConfig, clusterName string, cmdArgs []string) ([]string, runtime.Mount, error) {
+	dropIn, err := cc.WriteRootlessContainerdConfig(clusterName)
+	if err != nil {
+		return nil, runtime.Mount{}, err
+	}
+	mount := runtime.Mount{
+		Type:    "bind",
+		Source:  dropIn,
+		Target:  "/etc/k0s/containerd.d/rootless.toml",
+		Options: []string{"ro"},
+	}
+
+	// Respect an explicit --kubelet-extra-args rather than passing it twice.
+	for _, a := range cmdArgs {
+		if strings.HasPrefix(a, "--kubelet-extra-args") {
+			fmt.Println("⚠️  --kubelet-extra-args is set explicitly; make sure it includes --feature-gates=KubeletInUserNamespace=true or the kubelet will not start")
+			return cmdArgs, mount, nil
+		}
+	}
+	return append(cmdArgs, k0daconfig.RootlessKubeletArg), mount, nil
 }
 
 // buildK0sControllerArgs builds k0s controller command arguments

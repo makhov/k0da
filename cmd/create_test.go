@@ -1,10 +1,12 @@
 package cmd
 
 import (
+	"os"
 	"testing"
 
 	"github.com/makhov/k0da/internal/config"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestBuildK0sControllerArgs(t *testing.T) {
@@ -216,4 +218,38 @@ func TestBuildK0sControllerArgs(t *testing.T) {
 			assert.Equal(t, tt.expected, result, "buildK0sControllerArgs() = %v, want %v", result, tt.expected)
 		})
 	}
+}
+
+func TestRootlessNodeAdjustments(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	cc := &config.ClusterConfig{}
+
+	base := []string{"k0s", "controller", "--single"}
+	args, mount, err := rootlessNodeAdjustments(cc, "c1", base)
+	require.NoError(t, err)
+
+	assert.Equal(t, config.RootlessKubeletArg, args[len(args)-1],
+		"kubelet must be told it runs in a user namespace or it cannot open /dev/kmsg")
+	assert.Equal(t, "/etc/k0s/containerd.d/rootless.toml", mount.Target,
+		"k0s imports /etc/k0s/containerd.d/*.toml")
+	assert.Equal(t, []string{"ro"}, mount.Options)
+
+	// The drop-in must exist on the host and stop runc lowering oom_score_adj,
+	// which otherwise fails every pod sandbox.
+	data, err := os.ReadFile(mount.Source)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), "restrict_oom_score_adj = true")
+	assert.Contains(t, string(data), `[plugins."io.containerd.cri.v1.runtime"]`)
+}
+
+func TestRootlessNodeAdjustmentsRespectsExplicitKubeletArgs(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	cc := &config.ClusterConfig{}
+
+	base := []string{"k0s", "controller", "--kubelet-extra-args=--v=4"}
+	args, mount, err := rootlessNodeAdjustments(cc, "c1", base)
+	require.NoError(t, err)
+
+	assert.Equal(t, base, args, "must not pass --kubelet-extra-args twice")
+	assert.NotEmpty(t, mount.Source, "containerd drop-in is still required")
 }

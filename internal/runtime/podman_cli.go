@@ -51,6 +51,17 @@ func NewPodmanRuntime(ctx context.Context, socket string, identity string) (*Pod
 
 func (p *Podman) Name() string { return p.name }
 
+// IsRootless reports whether podman runs containers as an unprivileged user.
+func (p *Podman) IsRootless(ctx context.Context) (bool, error) {
+	args := p.argsWithConnection([]string{"info", "--format", "{{.Host.Security.Rootless}}"})
+	cmd := p.withEnv(exec.CommandContext(ctx, "podman", args...))
+	out, err := cmd.Output()
+	if err != nil {
+		return false, fmt.Errorf("failed to query podman info: %w", err)
+	}
+	return strings.TrimSpace(string(out)) == "true", nil
+}
+
 func (p *Podman) withEnv(cmd *exec.Cmd) *exec.Cmd {
 	env := os.Environ()
 	if p.connection == "" && p.socket != "" {
@@ -369,7 +380,7 @@ func (p *Podman) EnsureNetwork(ctx context.Context, name string) error {
 	return nil
 }
 
-// findPreferredPodmanConnection returns a rootful or default connection name from
+// findPreferredPodmanConnection returns the default connection name from
 // `podman system connection list --format json`.
 func findPreferredPodmanConnection(ctx context.Context) (string, bool) {
 	cmd := exec.CommandContext(ctx, "podman", "system", "connection", "list", "--format", "json")
@@ -381,15 +392,8 @@ func findPreferredPodmanConnection(ctx context.Context) (string, bool) {
 	if err := json.Unmarshal(out, &arr); err != nil || len(arr) == 0 {
 		return "", false
 	}
-	// 1) Prefer an entry that clearly indicates root (URI starts with ssh://root@ or name contains "root")
-	for _, m := range arr {
-		name, _ := m["Name"].(string)
-		uri, _ := m["URI"].(string)
-		if strings.HasPrefix(strings.ToLower(uri), "ssh://root@") || strings.Contains(strings.ToLower(name), "root") {
-			return name, true
-		}
-	}
-	// 2) Prefer default/active/current
+	// Prefer the user's default/active connection. k0da supports rootless nodes,
+	// so it must not silently promote the caller to a rootful connection.
 	for _, m := range arr {
 		name, _ := m["Name"].(string)
 		for _, key := range []string{"Default", "Active", "Current"} {
@@ -407,7 +411,7 @@ func findPreferredPodmanConnection(ctx context.Context) (string, bool) {
 			}
 		}
 	}
-	// 3) Fallback: first entry
+	// Fallback: first entry
 	if name, _ := arr[0]["Name"].(string); name != "" {
 		return name, true
 	}

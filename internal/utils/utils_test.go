@@ -23,6 +23,8 @@ type fakeRuntime struct {
 	portIP  string
 	port    int
 	portErr error
+
+	rootless bool
 }
 
 func (f *fakeRuntime) Name() string { return "fake" }
@@ -59,6 +61,8 @@ func (f *fakeRuntime) SaveImageToTar(_ context.Context, _ string, _ string) erro
 }
 
 func (f *fakeRuntime) EnsureNetwork(_ context.Context, _ string) error { return nil }
+
+func (f *fakeRuntime) IsRootless(_ context.Context) (bool, error) { return f.rootless, nil }
 
 func TestWaitForK0sReady_SucceedsImmediately(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)

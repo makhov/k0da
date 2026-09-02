@@ -144,22 +144,6 @@ func tryPodmanConnectionList() (string, string) {
 	return "", ""
 }
 
-func podmanMachineIsRootful() (bool, bool) {
-	cmd := exec.Command("podman", "machine", "inspect")
-	out, err := cmd.CombinedOutput()
-	if err != nil || len(out) == 0 {
-		return false, false
-	}
-	var arr []map[string]any
-	if err := json.Unmarshal(out, &arr); err != nil || len(arr) == 0 {
-		return false, false
-	}
-	if v, ok := arr[0]["Rootful"].(bool); ok {
-		return v, true
-	}
-	return false, false
-}
-
 func Detect(ctx context.Context, opts DetectOptions) (Runtime, error) {
 	runtime := strings.ToLower(strings.TrimSpace(opts.Runtime))
 	if runtime == "" {
@@ -223,19 +207,6 @@ func Detect(ctx context.Context, opts DetectOptions) (Runtime, error) {
 		}
 	}
 	// All socket candidates already have protocol
-
-	// If using Podman on macOS and machine is rootless but we selected a rootless connection, check for rootful alternative
-	if runtime == "podman" {
-		if isRootful, ok := podmanMachineIsRootful(); ok && !isRootful {
-			// Try to find rootful connection
-			u2, id2 := tryPodmanConnectionList()
-			if strings.HasPrefix(u2, "ssh://root@") {
-				socket, identity = u2, id2
-			} else {
-				return nil, fmt.Errorf("podman machine is rootless; please run 'podman machine set --rootful' and restart, or set K0DA_RUNTIME=docker")
-			}
-		}
-	}
 
 	if runtime != "" {
 		switch runtime {
