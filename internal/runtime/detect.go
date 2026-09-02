@@ -2,234 +2,134 @@ package runtime
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
-	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
-	"time"
 )
 
-type DetectOptions struct {
-	Runtime        string
-	SocketOverride string
+// Detect returns the first container runtime that answers on one of its
+// candidate endpoints.
+//
+// K0DA_RUNTIME pins the runtime to docker or podman, K0DA_SOCKET pins the
+// endpoint. Without them k0da probes docker first, then podman. Every endpoint
+// is validated by connecting to it, so a candidate that is stale, belongs to a
+// stopped VM, or uses a transport the API client cannot dial is skipped in
+// favour of the next one.
+func Detect(ctx context.Context) (Runtime, error) {
+	name := strings.ToLower(getenv("K0DA_RUNTIME", "K0DA_BACKEND"))
+	socket := getenv("K0DA_SOCKET")
+
+	switch name {
+	case "docker":
+		return detectDocker(ctx, socket)
+	case "podman":
+		return NewPodmanRuntime(ctx, socket)
+	case "containerd":
+		return nil, errors.New("containerd runtime is not implemented yet")
+	case "":
+		// Fall through to probing.
+	default:
+		return nil, fmt.Errorf("unknown runtime %q: expected docker or podman", name)
+	}
+
+	if r, err := detectDocker(ctx, socket); err == nil {
+		return r, nil
+	}
+	if r, err := NewPodmanRuntime(ctx, socket); err == nil {
+		return r, nil
+	}
+	return nil, errors.New("no supported container runtime detected. Set K0DA_RUNTIME=docker|podman and K0DA_SOCKET=<socket> to override detection")
 }
 
-func getenv(keys ...string) (string, bool) {
-	for _, k := range keys {
-		if v := os.Getenv(k); v != "" {
-			return v, true
+// detectDocker connects to the first docker endpoint whose daemon answers.
+func detectDocker(ctx context.Context, override string) (Runtime, error) {
+	var errs []error
+	for _, host := range dockerCandidates(ctx, override) {
+		d, err := NewDockerRuntime(ctx, host)
+		if err == nil {
+			return d, nil
+		}
+		errs = append(errs, fmt.Errorf("%s: %w", host, err))
+	}
+	return nil, fmt.Errorf("no reachable docker daemon: %w", errors.Join(errs...))
+}
+
+// dockerCandidates lists docker endpoints in the precedence the docker CLI
+// itself uses — DOCKER_HOST, then the active CLI context — followed by the
+// socket paths of the desktop runtimes that expose a docker-compatible API.
+// On a machine with several runtimes installed /var/run/docker.sock often
+// belongs to a different one than the context the user actually works in, so
+// the context endpoint has to win over it.
+func dockerCandidates(ctx context.Context, override string) []string {
+	if override != "" {
+		return []string{override}
+	}
+	var out []string
+	if h := getenv("DOCKER_HOST"); h != "" {
+		out = append(out, h)
+	}
+	if h := dockerContextEndpoint(ctx); h != "" {
+		out = append(out, h)
+	}
+	if runtime.GOOS == "windows" {
+		return dedupe(append(out, "npipe:////./pipe/docker_engine"))
+	}
+	out = append(out, "unix:///var/run/docker.sock")
+	if home, err := os.UserHomeDir(); err == nil {
+		for _, parts := range dockerHomeSockets {
+			out = append(out, "unix://"+filepath.Join(home, filepath.Join(parts...)))
 		}
 	}
-	return "", false
+	return dedupe(out)
 }
 
-// tryPodmanMacTmpdirSocket checks $TMPDIR/podman/podman-machine-default.sock
-// and returns a unix:// URI if present and reachable.
-func tryPodmanMacTmpdirSocket() string {
-	tmp := os.Getenv("TMPDIR")
-	if tmp == "" {
+// dockerHomeSockets are docker-compatible sockets that the common desktop
+// runtimes place under the user's home directory, relative to it.
+var dockerHomeSockets = [][]string{
+	{".docker", "run", "docker.sock"},                                                 // Docker Desktop
+	{"Library", "Containers", "com.docker.docker", "Data", "vms", "0", "docker.sock"}, // Docker Desktop, older macOS layout
+	{".colima", "docker.sock"},                                                        // Colima
+	{".colima", "default", "docker.sock"},                                             // Colima, named profile layout
+	{".orbstack", "run", "docker.sock"},                                               // OrbStack
+	{".rd", "docker.sock"},                                                            // Rancher Desktop
+	{".lima", "default", "sock", "docker.sock"},                                       // Lima
+	{".local", "share", "containers", "podman", "machine", "podman-machine-default", "podman.sock"}, // podman's docker-compatible API
+}
+
+// dockerContextEndpoint returns the docker endpoint of the CLI's active
+// context, so k0da talks to the same daemon as the user's `docker` command.
+// It returns "" when the docker CLI is absent or has no usable context.
+func dockerContextEndpoint(ctx context.Context) string {
+	out, err := exec.CommandContext(ctx, "docker", "context", "inspect", "--format", "{{.Endpoints.docker.Host}}").Output()
+	if err != nil {
 		return ""
 	}
-	p := filepath.Join(tmp, "podman", "podman-machine-default.sock")
-	if _, err := os.Stat(p); err == nil {
-		// Probe reachability (connection refused -> skip)
-		conn, err := net.DialTimeout("unix", p, 500*time.Millisecond)
-		if err == nil {
-			_ = conn.Close()
-			return "unix://" + p
+	return strings.TrimSpace(string(out))
+}
+
+// getenv returns the first non-empty value among keys.
+func getenv(keys ...string) string {
+	for _, k := range keys {
+		if v := strings.TrimSpace(os.Getenv(k)); v != "" {
+			return v
 		}
 	}
 	return ""
 }
 
-// tryDockerSocketCandidates checks all Docker socket candidates and returns
-// the first one that exists and is reachable, or empty string if none found.
-// tryDockerSocketCandidates returns the first reachable Docker socket and its proto, or empty string if none found.
-func tryDockerSocketCandidates() (socket string) {
-	if runtime.GOOS == "windows" {
-		return "npipe:////./pipe/docker_engine"
-	}
-	home := os.Getenv("HOME")
-	candidates := []string{"unix:///var/run/docker.sock"}
-	if home != "" {
-		candidates = append(candidates,
-			"unix://"+filepath.Join(home, ".colima", "docker.sock"),
-			"unix://"+filepath.Join(home, ".colima", "default", "docker.sock"),
-			"unix://"+filepath.Join(home, ".orbstack", "run", "docker.sock"),
-			"unix://"+filepath.Join(home, ".lima", "default", "sock", "docker.sock"),
-			"unix://"+filepath.Join(home, "Library", "Containers", "com.docker.docker", "Data", "vms", "0", "docker.sock"),
-			"unix://"+filepath.Join(home, ".rd", "docker.sock"),
-			"unix://"+filepath.Join(home, ".local", "share", "containers", "podman", "machine", "podman-machine-default", "podman.sock"),
-		)
-	}
-	for _, socket := range candidates {
-		path := strings.TrimPrefix(socket, "unix://")
-		if _, err := os.Stat(path); err == nil {
-			if isSocketReachable("unix", path, 3) {
-				return socket
-			}
+func dedupe(in []string) []string {
+	seen := make(map[string]struct{}, len(in))
+	out := in[:0]
+	for _, s := range in {
+		if _, ok := seen[s]; ok {
+			continue
 		}
+		seen[s] = struct{}{}
+		out = append(out, s)
 	}
-	return ""
-}
-
-// isSocketReachable tests socket connectivity with retries
-func isSocketReachable(proto, socketPath string, maxRetries int) bool {
-	for i := 0; i < maxRetries; i++ {
-		conn, err := net.DialTimeout(proto, socketPath, 500*time.Millisecond)
-		if err == nil {
-			_ = conn.Close()
-			return true
-		}
-		if i < maxRetries-1 {
-			time.Sleep(100 * time.Millisecond)
-		}
-	}
-	return false
-}
-
-// tryPodmanConnectionList queries `podman system connection list --format json`
-// and returns the URI and Identity of the best connection (prefer rootful), or "" if not found.
-func tryPodmanConnectionList() (string, string) {
-	cmd := exec.Command("podman", "system", "connection", "list", "--format", "json")
-	out, err := cmd.CombinedOutput()
-	if err != nil || len(out) == 0 {
-		return "", ""
-	}
-	var arr []map[string]any
-	if err := json.Unmarshal(out, &arr); err != nil || len(arr) == 0 {
-		return "", ""
-	}
-	// Prefer rootful connection
-	for _, m := range arr {
-		uri, _ := m["URI"].(string)
-		id, _ := m["Identity"].(string)
-		if strings.HasPrefix(uri, "ssh://root@") {
-			return uri, id
-		}
-	}
-	// Otherwise prefer default/active/current
-	pick := -1
-	for i, m := range arr {
-		for _, key := range []string{"Default", "Active", "Current"} {
-			if v, ok := m[key]; ok {
-				switch x := v.(type) {
-				case bool:
-					if x {
-						pick = i
-					}
-				case string:
-					if strings.TrimSpace(x) == "*" {
-						pick = i
-					}
-				}
-			}
-		}
-		if pick != -1 {
-			break
-		}
-	}
-	if pick == -1 {
-		pick = 0
-	}
-	if pick >= 0 && pick < len(arr) {
-		uri, _ := arr[pick]["URI"].(string)
-		id, _ := arr[pick]["Identity"].(string)
-		return uri, id
-	}
-	return "", ""
-}
-
-func Detect(ctx context.Context, opts DetectOptions) (Runtime, error) {
-	runtime := strings.ToLower(strings.TrimSpace(opts.Runtime))
-	if runtime == "" {
-		if v, ok := getenv("K0DA_RUNTIME", "K0DA_BACKEND"); ok {
-			runtime = strings.ToLower(v)
-		}
-	}
-	socket := strings.TrimSpace(opts.SocketOverride)
-	if socket == "" {
-		if v, ok := getenv("K0DA_SOCKET"); ok {
-			socket = v
-		}
-	}
-	// If runtime is docker/empty and DOCKER_HOST set, prefer it when socket still empty
-	if socket == "" && (runtime == "docker" || runtime == "") {
-		if v, ok := getenv("DOCKER_HOST"); ok {
-			socket = v
-		}
-	}
-	identity := ""
-	// If socket still empty, guess per runtime
-	if socket == "" {
-		switch runtime {
-		case "docker", "":
-			// Try all Docker socket candidates
-			if s := tryDockerSocketCandidates(); s != "" {
-				socket = s
-			} else {
-				// Fallback to default Docker socket
-				socket = "unix:///var/run/docker.sock"
-			}
-		case "podman":
-			// First, prefer connection list (rootful if available)
-			u, id := tryPodmanConnectionList()
-			if u != "" {
-				socket, identity = u, id
-			} else {
-				// Otherwise try standard sockets
-				if rd, ok := getenv("XDG_RUNTIME_DIR"); ok {
-					p := filepath.Join(rd, "podman", "podman.sock")
-					if _, err := os.Stat(p); err == nil {
-						socket = "unix://" + p
-					}
-				}
-				if socket == "" {
-					cands := []string{"/run/podman/podman.sock", "/var/run/podman/podman.sock"}
-					for _, p := range cands {
-						if _, err := os.Stat(p); err == nil {
-							socket = "unix://" + p
-							break
-						}
-					}
-				}
-				// On macOS, $TMPDIR unix socket as last resort (only if reachable)
-				if socket == "" {
-					if s := tryPodmanMacTmpdirSocket(); s != "" {
-						socket = s
-					}
-				}
-			}
-		}
-	}
-	// All socket candidates already have protocol
-
-	if runtime != "" {
-		switch runtime {
-		case "docker":
-			return NewDockerRuntime(ctx, socket)
-		case "podman":
-			return NewPodmanRuntime(ctx, socket, identity)
-		case "containerd":
-			return nil, fmt.Errorf("containerd backend not implemented yet")
-		default:
-			return nil, fmt.Errorf("unknown runtime: %s", runtime)
-		}
-	}
-	// Try Docker with any available socket first if no socket was set
-	if socket == "" {
-		socket = tryDockerSocketCandidates()
-	}
-
-	if b, err := NewDockerRuntime(ctx, socket); err == nil {
-		return b, nil
-	}
-	if b, err := NewPodmanRuntime(ctx, socket, identity); err == nil {
-		return b, nil
-	}
-	return nil, fmt.Errorf("no supported container runtime detected. Please set K0DA_RUNTIME=docker|podman and K0DA_SOCKET=<socket-path> to override detection")
+	return out
 }
