@@ -46,6 +46,28 @@ func tryPodmanMacTmpdirSocket() string {
 	return ""
 }
 
+// tryDockerContextEndpoint returns the Docker endpoint of the CLI's active
+// context, so k0da talks to the same daemon as the user's `docker` command.
+// On machines with several runtimes installed, /var/run/docker.sock often
+// belongs to a different one than the context the user actually works in.
+func tryDockerContextEndpoint(ctx context.Context) string {
+	cmd := exec.CommandContext(ctx, "docker", "context", "inspect", "--format", "{{.Endpoints.docker.Host}}")
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	host := strings.TrimSpace(string(out))
+	if host == "" {
+		return ""
+	}
+	if path, ok := strings.CutPrefix(host, "unix://"); ok {
+		if _, err := os.Stat(path); err != nil || !isSocketReachable("unix", path, 1) {
+			return ""
+		}
+	}
+	return host
+}
+
 // tryDockerSocketCandidates checks all Docker socket candidates and returns
 // the first one that exists and is reachable, or empty string if none found.
 // tryDockerSocketCandidates returns the first reachable Docker socket and its proto, or empty string if none found.
@@ -168,8 +190,10 @@ func Detect(ctx context.Context, opts DetectOptions) (Runtime, error) {
 	if socket == "" {
 		switch runtime {
 		case "docker", "":
-			// Try all Docker socket candidates
-			if s := tryDockerSocketCandidates(); s != "" {
+			// Prefer the CLI's active context, then probe known socket paths
+			if s := tryDockerContextEndpoint(ctx); s != "" {
+				socket = s
+			} else if s := tryDockerSocketCandidates(); s != "" {
 				socket = s
 			} else {
 				// Fallback to default Docker socket
@@ -222,7 +246,9 @@ func Detect(ctx context.Context, opts DetectOptions) (Runtime, error) {
 	}
 	// Try Docker with any available socket first if no socket was set
 	if socket == "" {
-		socket = tryDockerSocketCandidates()
+		if socket = tryDockerContextEndpoint(ctx); socket == "" {
+			socket = tryDockerSocketCandidates()
+		}
 	}
 
 	if b, err := NewDockerRuntime(ctx, socket); err == nil {
