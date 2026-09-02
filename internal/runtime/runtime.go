@@ -133,6 +133,10 @@ type Runtime interface {
 	// EnsureNetwork ensures a user-defined network with the given name exists.
 	// It should be idempotent.
 	EnsureNetwork(ctx context.Context, name string) error
+
+	// IsRootless reports whether the runtime runs containers as an unprivileged
+	// user. Rootless nodes need extra kubelet and containerd settings to boot.
+	IsRootless(ctx context.Context) (bool, error)
 }
 
 // Factory constructs a Runtime given a socket URI (may be empty for default).

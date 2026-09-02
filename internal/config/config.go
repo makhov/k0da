@@ -204,6 +204,41 @@ func (c *ClusterConfig) ManifestDir(clusterName string) string {
 	return filepath.Join(c.ClusterDir(clusterName), "manifests")
 }
 
+// RootlessKubeletArg makes the kubelet tolerate running inside a user namespace.
+// Without it the kubelet cannot open /dev/kmsg to build its oomWatcher and exits,
+// so the node never registers.
+const RootlessKubeletArg = "--kubelet-extra-args=--feature-gates=KubeletInUserNamespace=true"
+
+// rootlessContainerdConfig clamps the OOM score adjustment containerd asks runc
+// to apply. In a user namespace runc cannot lower oom_score_adj, which otherwise
+// fails every pod sandbox — including kube-proxy and the CNI.
+const rootlessContainerdConfig = `version = 3
+
+[plugins]
+  [plugins."io.containerd.cri.v1.runtime"]
+    restrict_oom_score_adj = true
+`
+
+// RootlessContainerdConfigPath is where the drop-in lives on the host.
+func (c *ClusterConfig) RootlessContainerdConfigPath(clusterName string) string {
+	return filepath.Join(c.ConfigDir(clusterName), "containerd-rootless.toml")
+}
+
+// WriteRootlessContainerdConfig writes the containerd drop-in for rootless nodes
+// and returns its host path. k0s imports /etc/k0s/containerd.d/*.toml, so mounting
+// the result there is enough to apply it.
+func (c *ClusterConfig) WriteRootlessContainerdConfig(clusterName string) (string, error) {
+	dir := c.ConfigDir(clusterName)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return "", fmt.Errorf("create dir: %w", err)
+	}
+	path := c.RootlessContainerdConfigPath(clusterName)
+	if err := os.WriteFile(path, []byte(rootlessContainerdConfig), 0644); err != nil {
+		return "", fmt.Errorf("write rootless containerd config: %w", err)
+	}
+	return path, nil
+}
+
 // EffectiveImage returns the k0s image to use based on precedence:
 // 1) explicit image
 // 2) DefaultK0sImageRepo + ":" + version

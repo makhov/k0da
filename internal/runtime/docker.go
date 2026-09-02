@@ -42,6 +42,22 @@ func NewDockerRuntime(ctx context.Context, socket string) (*Docker, error) {
 
 func (d *Docker) Name() string { return d.name }
 
+// IsRootless reports whether the Docker daemon runs in rootless mode.
+// Both dockerd and podman's Docker-compatible API advertise this as a
+// "name=rootless" entry in SecurityOptions.
+func (d *Docker) IsRootless(ctx context.Context) (bool, error) {
+	info, err := d.cli.Info(ctx)
+	if err != nil {
+		return false, fmt.Errorf("failed to query daemon info: %w", err)
+	}
+	for _, opt := range info.SecurityOptions {
+		if strings.Contains(opt, "name=rootless") {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func (d *Docker) RunContainer(ctx context.Context, opts RunContainerOptions) (string, error) {
 	// Ensure image exists locally; pull if missing
 	if opts.Image != "" {

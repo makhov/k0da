@@ -97,7 +97,18 @@ docker run hello-world
 
 Install Podman following the [official Podman installation guide](https://podman.io/docs/installation).
 
-For macOS users with Podman, ensure you're using a rootful machine:
+Rootless Podman is supported. k0da detects a rootless runtime and configures the
+node for it automatically: the kubelet is started with
+`--feature-gates=KubeletInUserNamespace=true` so it tolerates running in a user
+namespace, and a containerd drop-in sets `restrict_oom_score_adj = true` so runc
+does not try to lower `oom_score_adj`, which a user namespace forbids. Without
+these the kubelet crash-loops on `/dev/kmsg` and every pod sandbox fails.
+
+If you pass your own `--kubelet-extra-args`, k0da leaves it alone — include
+`--feature-gates=KubeletInUserNamespace=true` yourself or the kubelet will not
+start.
+
+A rootful machine also works if you prefer one:
 
 ```bash
 podman machine set --rootful
