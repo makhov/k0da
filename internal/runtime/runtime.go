@@ -124,7 +124,7 @@ type Runtime interface {
 
 	ListContainersByLabel(ctx context.Context, labelSelector map[string]string, includeStopped bool) ([]ContainerInfo, error)
 
-	// CopyToContainer copies a local host path into the container at dstPath
+	// CopyToContainer copies a local file into the container at dstPath
 	CopyToContainer(ctx context.Context, name string, srcPath string, dstPath string) error
 
 	// SaveImageToTar saves a local image from the host runtime into a tar file at tarPath
@@ -137,29 +137,4 @@ type Runtime interface {
 	// IsRootless reports whether the runtime runs containers as an unprivileged
 	// user. Rootless nodes need extra kubelet and containerd settings to boot.
 	IsRootless(ctx context.Context) (bool, error)
-}
-
-// Factory constructs a Runtime given a socket URI (may be empty for default).
-type Factory func(ctx context.Context, socket string) (Runtime, error)
-
-var registry = map[string]Factory{}
-
-// Register adds a backend factory under a name, e.g. "docker", "podman".
-func Register(name string, factory Factory) {
-	registry[name] = factory
-}
-
-// GetFactory returns a registered backend factory by name.
-func GetFactory(name string) (Factory, bool) {
-	f, ok := registry[name]
-	return f, ok
-}
-
-// Registered returns the list of registered backend names.
-func Registered() []string {
-	names := make([]string, 0, len(registry))
-	for k := range registry {
-		names = append(names, k)
-	}
-	return names
 }

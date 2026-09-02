@@ -1,11 +1,13 @@
 package runtime
 
 import (
+	"archive/tar"
+	"bytes"
 	"context"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -16,6 +18,7 @@ import (
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/api/types/volume"
 	dockerClient "github.com/docker/docker/client"
+	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/docker/go-connections/nat"
 )
 
@@ -39,22 +42,6 @@ func NewDockerRuntime(ctx context.Context, socket string) (*Docker, error) {
 		return nil, err
 	}
 	return &Docker{cli: client, name: "docker", socket: socket}, nil
-}
-
-// dockerCmd builds a docker CLI invocation pinned to the same daemon the API
-// client talks to. Without this, a shell-out follows the CLI's active context
-// and can silently target a different daemon than the rest of the runtime.
-func (d *Docker) dockerCmd(ctx context.Context, args ...string) *exec.Cmd {
-	cmd := exec.CommandContext(ctx, "docker", args...)
-	env := make([]string, 0, len(os.Environ())+1)
-	for _, kv := range os.Environ() {
-		if strings.HasPrefix(kv, "DOCKER_HOST=") || strings.HasPrefix(kv, "DOCKER_CONTEXT=") {
-			continue
-		}
-		env = append(env, kv)
-	}
-	cmd.Env = append(env, "DOCKER_HOST="+d.socket)
-	return cmd
 }
 
 func (d *Docker) Name() string { return d.name }
@@ -113,8 +100,6 @@ func (d *Docker) RunContainer(ctx context.Context, opts RunContainerOptions) (st
 	if len(opts.Mounts) > 0 {
 		hostConfig.Binds = opts.Mounts.ToBinds()
 	}
-
-	hostConfig.Binds = append(hostConfig.Binds, "/var/run/docker.sock:/var/run/docker.sock")
 	// Port publishing
 	if len(opts.Publish) > 0 {
 		hostConfig.PortBindings = natPortBindings(opts.Publish)
@@ -181,18 +166,31 @@ func (d *Docker) RemoveContainer(ctx context.Context, name string) error {
 }
 
 func (d *Docker) ExecInContainer(ctx context.Context, name string, command []string) (string, int, error) {
-	// Fallback to docker CLI to avoid API type drift
-	args := append([]string{"exec", name}, command...)
-	cmd := d.dockerCmd(ctx, args...)
-	out, err := cmd.CombinedOutput()
+	created, err := d.cli.ContainerExecCreate(ctx, name, container.ExecOptions{
+		Cmd:          command,
+		AttachStdout: true,
+		AttachStderr: true,
+	})
 	if err != nil {
-		// Try to get exit code
-		if ee, ok := err.(*exec.ExitError); ok {
-			return string(out), ee.ExitCode(), nil
-		}
-		return string(out), 1, err
+		return "", 1, err
 	}
-	return string(out), 0, nil
+	att, err := d.cli.ContainerExecAttach(ctx, created.ID, container.ExecAttachOptions{})
+	if err != nil {
+		return "", 1, err
+	}
+	defer att.Close()
+
+	// The exec runs without a TTY, so its stream is multiplexed. Fold both
+	// channels into one buffer, the way `docker exec` output reads.
+	var buf bytes.Buffer
+	if _, err := stdcopy.StdCopy(&buf, &buf, att.Reader); err != nil {
+		return buf.String(), 1, err
+	}
+	insp, err := d.cli.ContainerExecInspect(ctx, created.ID)
+	if err != nil {
+		return buf.String(), 1, err
+	}
+	return buf.String(), insp.ExitCode, nil
 }
 
 func (d *Docker) GetPortMapping(ctx context.Context, name string, containerPort int, protocol string) (string, int, error) {
@@ -207,27 +205,7 @@ func (d *Docker) GetPortMapping(ctx context.Context, name string, containerPort 
 			return bindings[0].HostIP, atoiSafe(bindings[0].HostPort), nil
 		}
 	}
-	// Fallback to docker CLI: docker port <name> <port>/<proto>
-	args := []string{"port", name, fmt.Sprintf("%d/%s", containerPort, proto)}
-	cmd := d.dockerCmd(ctx, args...)
-	out, err := cmd.CombinedOutput()
-	if err == nil {
-		s := strings.TrimSpace(string(out))
-		if s != "" {
-			idx := strings.LastIndex(s, ":")
-			if idx != -1 && idx+1 < len(s) {
-				host := s[:idx]
-				portStr := s[idx+1:]
-				if host == "" {
-					host = "0.0.0.0"
-				}
-				host = strings.TrimPrefix(host, "[")
-				host = strings.TrimSuffix(host, "]")
-				return host, atoiSafe(portStr), nil
-			}
-		}
-	}
-	return "", 0, fmt.Errorf("port mapping not found")
+	return "", 0, fmt.Errorf("no host binding for %s in container %s", key, name)
 }
 
 func (d *Docker) VolumeExists(ctx context.Context, name string) (bool, error) {
@@ -267,24 +245,74 @@ func (d *Docker) ListContainersByLabel(ctx context.Context, selector map[string]
 	return out, nil
 }
 
-// CopyToContainer copies a local path into the container
+// CopyToContainer copies a local file into the container at dstPath.
 func (d *Docker) CopyToContainer(ctx context.Context, name string, srcPath string, dstPath string) error {
-	cmd := d.dockerCmd(ctx, "cp", srcPath, name+":"+dstPath)
-	out, err := cmd.CombinedOutput()
+	content, err := tarFile(srcPath, filepath.Base(dstPath))
 	if err != nil {
-		return fmt.Errorf("docker cp failed: %s", string(out))
+		return err
+	}
+	defer content.Close()
+	if err := d.cli.CopyToContainer(ctx, name, filepath.Dir(dstPath), content, container.CopyToContainerOptions{}); err != nil {
+		return fmt.Errorf("failed to copy %s into %s: %w", srcPath, name, err)
 	}
 	return nil
 }
 
 // SaveImageToTar saves a local Docker image into a tar archive
 func (d *Docker) SaveImageToTar(ctx context.Context, imageRef string, tarPath string) error {
-	cmd := d.dockerCmd(ctx, "save", "-o", tarPath, imageRef)
-	out, err := cmd.CombinedOutput()
+	rc, err := d.cli.ImageSave(ctx, []string{imageRef})
 	if err != nil {
-		return fmt.Errorf("docker save failed: %s", string(out))
+		return fmt.Errorf("failed to save image %s: %w", imageRef, err)
 	}
-	return nil
+	defer rc.Close()
+	f, err := os.Create(tarPath)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(f, rc); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("failed to write image archive %s: %w", tarPath, err)
+	}
+	return f.Close()
+}
+
+// tarFile streams a single regular file as a tar archive under the given name.
+// The docker API only accepts tar streams for container copies, and k0da only
+// ever copies one image archive at a time. Streaming keeps memory bounded:
+// image archives routinely run to hundreds of megabytes.
+func tarFile(srcPath, name string) (io.ReadCloser, error) {
+	fi, err := os.Stat(srcPath)
+	if err != nil {
+		return nil, err
+	}
+	if !fi.Mode().IsRegular() {
+		return nil, fmt.Errorf("cannot copy %s into container: not a regular file", srcPath)
+	}
+	f, err := os.Open(srcPath)
+	if err != nil {
+		return nil, err
+	}
+
+	pr, pw := io.Pipe()
+	go func() {
+		defer func() { _ = f.Close() }()
+		tw := tar.NewWriter(pw)
+		err := tw.WriteHeader(&tar.Header{
+			Typeflag: tar.TypeReg,
+			Name:     name,
+			Mode:     int64(fi.Mode().Perm()),
+			Size:     fi.Size(),
+			ModTime:  fi.ModTime(),
+		})
+		if err == nil {
+			_, err = io.Copy(tw, f)
+		}
+		if err == nil {
+			err = tw.Close()
+		}
+		_ = pw.CloseWithError(err)
+	}()
+	return pr, nil
 }
 
 func atoiSafe(s string) int { n, _ := strconv.Atoi(s); return n }

@@ -51,7 +51,7 @@ func init() {
 
 func runLoadArchive(clusterName, src string) error {
 	ctx := context.Background()
-	b, err := runtime.Detect(ctx, runtime.DetectOptions{})
+	b, err := runtime.Detect(ctx)
 	if err != nil {
 		return err
 	}
@@ -68,7 +68,10 @@ func runLoadArchive(clusterName, src string) error {
 		return err
 	}
 	// Import via k0s ctr
-	out, code, _ := b.ExecInContainer(ctx, clusterName, []string{"k0s", "ctr", "-n", "k8s.io", "images", "import", inContainer})
+	out, code, err := b.ExecInContainer(ctx, clusterName, []string{"k0s", "ctr", "-n", "k8s.io", "images", "import", inContainer})
+	if err != nil {
+		return fmt.Errorf("import failed: %w", err)
+	}
 	if code != 0 {
 		return fmt.Errorf("import failed: %s", out)
 	}
@@ -78,7 +81,7 @@ func runLoadArchive(clusterName, src string) error {
 
 func runLoadImage(clusterName, imageRef string) error {
 	ctx := context.Background()
-	b, err := runtime.Detect(ctx, runtime.DetectOptions{})
+	b, err := runtime.Detect(ctx)
 	if err != nil {
 		return err
 	}
@@ -102,7 +105,10 @@ func runLoadImage(clusterName, imageRef string) error {
 	if err := b.CopyToContainer(ctx, name, tarPath, inContainer); err != nil {
 		return fmt.Errorf("failed to copy image tar: %w", err)
 	}
-	out, code, _ := b.ExecInContainer(ctx, name, []string{"k0s", "ctr", "-n", "k8s.io", "images", "import", inContainer})
+	out, code, err := b.ExecInContainer(ctx, name, []string{"k0s", "ctr", "-n", "k8s.io", "images", "import", inContainer})
+	if err != nil {
+		return fmt.Errorf("import failed: %w", err)
+	}
 	if code != 0 {
 		return fmt.Errorf("import failed: %s", out)
 	}
