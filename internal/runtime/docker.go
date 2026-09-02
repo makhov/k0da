@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -38,6 +39,22 @@ func NewDockerRuntime(ctx context.Context, socket string) (*Docker, error) {
 		return nil, err
 	}
 	return &Docker{cli: client, name: "docker", socket: socket}, nil
+}
+
+// dockerCmd builds a docker CLI invocation pinned to the same daemon the API
+// client talks to. Without this, a shell-out follows the CLI's active context
+// and can silently target a different daemon than the rest of the runtime.
+func (d *Docker) dockerCmd(ctx context.Context, args ...string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, "docker", args...)
+	env := make([]string, 0, len(os.Environ())+1)
+	for _, kv := range os.Environ() {
+		if strings.HasPrefix(kv, "DOCKER_HOST=") || strings.HasPrefix(kv, "DOCKER_CONTEXT=") {
+			continue
+		}
+		env = append(env, kv)
+	}
+	cmd.Env = append(env, "DOCKER_HOST="+d.socket)
+	return cmd
 }
 
 func (d *Docker) Name() string { return d.name }
@@ -166,7 +183,7 @@ func (d *Docker) RemoveContainer(ctx context.Context, name string) error {
 func (d *Docker) ExecInContainer(ctx context.Context, name string, command []string) (string, int, error) {
 	// Fallback to docker CLI to avoid API type drift
 	args := append([]string{"exec", name}, command...)
-	cmd := exec.CommandContext(ctx, "docker", args...)
+	cmd := d.dockerCmd(ctx, args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		// Try to get exit code
@@ -192,7 +209,7 @@ func (d *Docker) GetPortMapping(ctx context.Context, name string, containerPort 
 	}
 	// Fallback to docker CLI: docker port <name> <port>/<proto>
 	args := []string{"port", name, fmt.Sprintf("%d/%s", containerPort, proto)}
-	cmd := exec.CommandContext(ctx, "docker", args...)
+	cmd := d.dockerCmd(ctx, args...)
 	out, err := cmd.CombinedOutput()
 	if err == nil {
 		s := strings.TrimSpace(string(out))
@@ -252,7 +269,7 @@ func (d *Docker) ListContainersByLabel(ctx context.Context, selector map[string]
 
 // CopyToContainer copies a local path into the container
 func (d *Docker) CopyToContainer(ctx context.Context, name string, srcPath string, dstPath string) error {
-	cmd := exec.CommandContext(ctx, "docker", "cp", srcPath, name+":"+dstPath)
+	cmd := d.dockerCmd(ctx, "cp", srcPath, name+":"+dstPath)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("docker cp failed: %s", string(out))
@@ -262,7 +279,7 @@ func (d *Docker) CopyToContainer(ctx context.Context, name string, srcPath strin
 
 // SaveImageToTar saves a local Docker image into a tar archive
 func (d *Docker) SaveImageToTar(ctx context.Context, imageRef string, tarPath string) error {
-	cmd := exec.CommandContext(ctx, "docker", "save", "-o", tarPath, imageRef)
+	cmd := d.dockerCmd(ctx, "save", "-o", tarPath, imageRef)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("docker save failed: %s", string(out))
@@ -318,18 +335,27 @@ func (d *Docker) EnsureNetwork(ctx context.Context, name string) error {
 	if strings.TrimSpace(name) == "" {
 		return nil
 	}
-	// Check: docker network inspect <name>
-	cmd := exec.CommandContext(ctx, "docker", "network", "inspect", name)
-	if out, err := cmd.CombinedOutput(); err == nil && len(out) > 0 {
+	_, err := d.cli.NetworkInspect(ctx, name, network.InspectOptions{})
+	if err == nil {
 		return nil
 	}
-	// Create
-	args := []string{"network", "create", "--driver", "bridge", "--attachable", "--label", "k0da.network=true", "--label", "k0da.network.name=" + name, name}
-	cmd = exec.CommandContext(ctx, "docker", args...)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("docker network create failed: %s", strings.TrimSpace(string(out)))
+	if !dockerClient.IsErrNotFound(err) {
+		return fmt.Errorf("failed to inspect network %q: %w", name, err)
 	}
-	_ = out
+	_, err = d.cli.NetworkCreate(ctx, name, network.CreateOptions{
+		Driver:     "bridge",
+		Attachable: true,
+		Labels: map[string]string{
+			"k0da.network":      "true",
+			"k0da.network.name": name,
+		},
+	})
+	if err != nil {
+		// Another creator may have won the race between inspect and create.
+		if _, ierr := d.cli.NetworkInspect(ctx, name, network.InspectOptions{}); ierr == nil {
+			return nil
+		}
+		return fmt.Errorf("failed to create network %q: %w", name, err)
+	}
 	return nil
 }
