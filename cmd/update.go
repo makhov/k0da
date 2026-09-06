@@ -65,7 +65,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 
 	// Detect container backend
 	ctx := context.Background()
-	r, err := runtime.Detect(ctx, runtime.DetectOptions{})
+	r, err := runtime.Detect(ctx)
 	if err != nil {
 		return err
 	}

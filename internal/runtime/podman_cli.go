@@ -15,11 +15,10 @@ import (
 type Podman struct {
 	name       string
 	socket     string
-	identity   string
 	connection string
 }
 
-func NewPodmanRuntime(ctx context.Context, socket string, identity string) (*Podman, error) {
+func NewPodmanRuntime(ctx context.Context, socket string) (*Podman, error) {
 	// Optional explicit connection name (e.g., podman-machine-default-root)
 	connName := strings.TrimSpace(os.Getenv("K0DA_PODMAN_CONNECTION"))
 	if connName == "" {
@@ -38,15 +37,11 @@ func NewPodmanRuntime(ctx context.Context, socket string, identity string) (*Pod
 	if connName == "" && socket != "" {
 		env = append(env, "CONTAINER_HOST="+socket)
 	}
-	// identity (ssh key) handled by CONTAINER_SSHKEY if using ssh://
-	if connName == "" && strings.HasPrefix(socket, "ssh://") && identity != "" && os.Getenv("CONTAINER_SSHKEY") == "" {
-		env = append(env, "CONTAINER_SSHKEY="+identity)
-	}
 	cmd.Env = env
 	if out, err := cmd.CombinedOutput(); err != nil || len(strings.TrimSpace(string(out))) == 0 {
 		return nil, fmt.Errorf("podman CLI not available or unreachable: %s", strings.TrimSpace(string(out)))
 	}
-	return &Podman{name: "podman", socket: socket, identity: identity, connection: connName}, nil
+	return &Podman{name: "podman", socket: socket, connection: connName}, nil
 }
 
 func (p *Podman) Name() string { return p.name }
@@ -66,9 +61,6 @@ func (p *Podman) withEnv(cmd *exec.Cmd) *exec.Cmd {
 	env := os.Environ()
 	if p.connection == "" && p.socket != "" {
 		env = append(env, "CONTAINER_HOST="+p.socket)
-	}
-	if p.connection == "" && strings.HasPrefix(p.socket, "ssh://") && strings.TrimSpace(p.identity) != "" && os.Getenv("CONTAINER_SSHKEY") == "" {
-		env = append(env, "CONTAINER_SSHKEY="+p.identity)
 	}
 	cmd.Env = env
 	return cmd

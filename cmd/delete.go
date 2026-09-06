@@ -49,7 +49,7 @@ func runDelete(cmd *cobra.Command, args []string) error {
 	}
 
 	ctx := context.Background()
-	r, err := runtime.Detect(ctx, runtime.DetectOptions{})
+	r, err := runtime.Detect(ctx)
 	if err != nil {
 		return err
 	}

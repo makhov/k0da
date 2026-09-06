@@ -66,7 +66,7 @@ type ClusterInfo struct {
 
 func getK0daClusters(includeStopped bool) ([]ClusterInfo, error) {
 	ctx := context.Background()
-	b, err := runtime.Detect(ctx, runtime.DetectOptions{})
+	b, err := runtime.Detect(ctx)
 	if err != nil {
 		return nil, err
 	}
