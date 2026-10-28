@@ -114,6 +114,9 @@ spec:
       - ./manifests/00-namespace.yaml
       - ./manifests/10-app.yaml
       - https://raw.githubusercontent.com/haproxytech/kubernetes-ingress/refs/heads/master/deploy/haproxy-ingress.yaml
+    # Optional: containerd config drop-ins (.toml), imported by k0s's containerd
+    containerd:
+      - ./containerd/my-runtime.toml
 
   nodes:
     - role: controller
