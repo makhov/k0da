@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/imdario/mergo"
 	"gopkg.in/yaml.v3"
@@ -83,6 +84,10 @@ type K0sSpec struct {
 	Config    map[string]any `yaml:"config,omitempty"`
 	Args      []string       `yaml:"args,omitempty"`
 	Manifests []string       `yaml:"manifests,omitempty"`
+	// Containerd lists containerd config drop-ins (TOML files, relative to
+	// the cluster config file or URLs). k0s's containerd imports
+	// /etc/k0s/containerd.d/*.toml, e.g. to register extra runtimes.
+	Containerd []string `yaml:"containerd,omitempty"`
 }
 
 // LoadClusterConfig loads a cluster config from the given path.
@@ -202,6 +207,27 @@ func (c *ClusterConfig) ConfigPath(clusterName string) string {
 
 func (c *ClusterConfig) ManifestDir(clusterName string) string {
 	return filepath.Join(c.ClusterDir(clusterName), "manifests")
+}
+
+// ContainerdDir is where containerd drop-ins are staged on the host.
+func (c *ClusterConfig) ContainerdDir(clusterName string) string {
+	return filepath.Join(c.ClusterDir(clusterName), "containerd.d")
+}
+
+// ResolvePath makes a path from the cluster config absolute, relative to
+// the config file's directory (or the working directory without one).
+// Container engines read a relative bind source as a volume name.
+func (c *ClusterConfig) ResolvePath(p string) string {
+	if filepath.IsAbs(p) {
+		return p
+	}
+	if strings.TrimSpace(c.SourcePath) != "" {
+		p = filepath.Join(filepath.Dir(c.SourcePath), p)
+	}
+	if abs, err := filepath.Abs(p); err == nil {
+		return abs
+	}
+	return p
 }
 
 // RootlessKubeletArg makes the kubelet tolerate running inside a user namespace.

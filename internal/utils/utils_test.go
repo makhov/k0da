@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	k0daconfig "github.com/makhov/k0da/internal/config"
 	"github.com/makhov/k0da/internal/runtime"
 	"github.com/stretchr/testify/require"
 )
@@ -170,4 +171,28 @@ func TestWaitForK0sReady_SucceedsOnceContainerdIsUp(t *testing.T) {
 	}
 
 	require.NoError(t, WaitForK0sReady(ctx, r, "test", "10s"))
+}
+
+func TestCopyContainerdDropInsToDir(t *testing.T) {
+	src := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(src, "a.toml"), []byte("version = 3\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(src, "b.toml"), []byte("version = 3\n"), 0o644))
+	cc := &k0daconfig.ClusterConfig{
+		SourcePath: filepath.Join(src, "cluster.yaml"),
+		Spec:       k0daconfig.Spec{K0s: k0daconfig.K0sSpec{Containerd: []string{"a.toml", "b.toml"}}},
+	}
+	dst := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dst, "stale.toml"), nil, 0o644))
+	require.NoError(t, CopyContainerdDropInsToDir(cc, dst))
+
+	entries, err := os.ReadDir(dst)
+	require.NoError(t, err)
+	var names []string
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	require.Equal(t, []string{"000_a.toml", "001_b.toml"}, names)
+
+	cc.Spec.K0s.Containerd = []string{"a.yaml"}
+	require.Error(t, CopyContainerdDropInsToDir(cc, dst), "drop-ins must be .toml for containerd's imports glob")
 }

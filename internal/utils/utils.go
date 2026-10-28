@@ -219,6 +219,31 @@ func CopyManifestsToDir(cc *k0daconfig.ClusterConfig, destDir string) error {
 	return copyManifestsToDir(cc.Spec.K0s.Manifests, baseDir, destDir)
 }
 
+// CopyContainerdDropInsToDir stages the cluster's containerd drop-ins into
+// destDir, prefixed to keep their order. They must end in .toml: k0s's
+// containerd imports /etc/k0s/containerd.d/*.toml.
+func CopyContainerdDropInsToDir(cc *k0daconfig.ClusterConfig, destDir string) error {
+	if err := os.MkdirAll(destDir, 0755); err != nil {
+		return fmt.Errorf("failed to create containerd drop-in directory: %w", err)
+	}
+	if err := RemoveAllFiles(destDir); err != nil {
+		return fmt.Errorf("failed to clean containerd drop-in directory: %w", err)
+	}
+	if cc == nil || len(cc.Spec.K0s.Containerd) == 0 {
+		return nil
+	}
+	for _, p := range cc.Spec.K0s.Containerd {
+		if !strings.HasSuffix(strings.TrimSpace(p), ".toml") {
+			return fmt.Errorf("containerd drop-in %q: must be a .toml file", p)
+		}
+	}
+	baseDir := ""
+	if strings.TrimSpace(cc.SourcePath) != "" {
+		baseDir = filepath.Dir(cc.SourcePath)
+	}
+	return copyManifestsToDir(cc.Spec.K0s.Containerd, baseDir, destDir)
+}
+
 func isURL(str string) bool {
 	u, err := url.Parse(str)
 	if err != nil {
@@ -266,14 +291,14 @@ func copyManifestsToDir(paths []string, baseDir string, destDir string) error {
 			}
 			data, err = os.ReadFile(abs)
 			if err != nil {
-				return fmt.Errorf("failed to read manifest %q: %w", p, err)
+				return fmt.Errorf("failed to read %q: %w", p, err)
 			}
 			baseName = filepath.Base(abs)
 		}
 		// Prefix with index to keep deterministic order
 		dst := filepath.Join(destDir, fmt.Sprintf("%03d_%s", i, baseName))
 		if err := os.WriteFile(dst, data, 0644); err != nil {
-			return fmt.Errorf("failed to write manifest to %q: %w", dst, err)
+			return fmt.Errorf("failed to write %q: %w", dst, err)
 		}
 	}
 	return nil

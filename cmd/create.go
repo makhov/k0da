@@ -61,6 +61,8 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	var finalImage string
 	if cc.Spec.K0s.Image != "" || cc.Spec.K0s.Version != "" {
 		finalImage = cc.Spec.K0s.EffectiveImage()
+	} else if cmd.Flags().Changed("image") {
+		finalImage = image
 	} else {
 		client := &http.Client{Timeout: 3 * time.Second}
 		if stable, err := k0daconfig.FetchStableK0sVersion(client); err == nil && strings.TrimSpace(stable) != "" {
@@ -116,16 +118,49 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// nodeMounts are the mounts every node gets from the cluster config: the
+// staged containerd drop-ins and the node's own mounts, with relative bind
+// sources resolved against the config file.
+//
+// Drop-ins are bound file by file: k0s chmods /etc/k0s/containerd.d at
+// start, which fails on a read-only directory mount, and drop-ins the image
+// already has stay visible.
+func nodeMounts(cc *k0daconfig.ClusterConfig, clusterName string, node *k0daconfig.NodeSpec) runtime.Mounts {
+	var mounts runtime.Mounts
+	if len(cc.Spec.K0s.Containerd) > 0 {
+		dir := cc.ContainerdDir(clusterName)
+		entries, _ := os.ReadDir(dir)
+		for _, e := range entries {
+			mounts = append(mounts, runtime.Mount{
+				Type: "bind", Source: filepath.Join(dir, e.Name()),
+				Target: "/etc/k0s/containerd.d/" + e.Name(), Options: []string{"ro"},
+			})
+		}
+	}
+	if node == nil {
+		return mounts
+	}
+	for _, m := range node.Mounts {
+		src := m.Source
+		if m.Type == "bind" {
+			src = cc.ResolvePath(src)
+		}
+		mounts = append(mounts, runtime.Mount{Type: m.Type, Source: src, Target: m.Target, Options: m.Options})
+	}
+	return mounts
+}
+
 func createK0sCluster(ctx context.Context, b runtime.Runtime, name, image string, wait bool, timeout string, cc *k0daconfig.ClusterConfig, rootless bool) error {
 	containerName := name
 	hostname := name
-
-	fmt.Printf("Creating container '%s' with image '%s' using %s...\n", containerName, image, b.Name())
 
 	// Ensure manifests directory exists on host for k0s manifests and copy manifests into it
 	hostK0daManifestsPath := cc.ManifestDir(name)
 	if err := utils.CopyManifestsToDir(cc, hostK0daManifestsPath); err != nil {
 		return fmt.Errorf("failed to stage manifests: %w", err)
+	}
+	if err := utils.CopyContainerdDropInsToDir(cc, cc.ContainerdDir(name)); err != nil {
+		return fmt.Errorf("failed to stage containerd drop-ins: %w", err)
 	}
 
 	// Build mounts
@@ -139,11 +174,7 @@ func createK0sCluster(ctx context.Context, b runtime.Runtime, name, image string
 
 	// Node overrides/extensions
 	node := cc.PickPrimaryNode()
-	if node != nil {
-		for _, m := range node.Mounts {
-			mounts = append(mounts, runtime.Mount{Type: m.Type, Source: m.Source, Target: m.Target, Options: m.Options})
-		}
-	}
+	mounts = append(mounts, nodeMounts(cc, name, node)...)
 
 	// Build command args
 	cmdArgs := buildK0sControllerArgs(cc, node, true)
@@ -170,6 +201,7 @@ func createK0sCluster(ctx context.Context, b runtime.Runtime, name, image string
 	if node != nil && strings.TrimSpace(node.Image) != "" {
 		effectiveImage = node.Image
 	}
+	fmt.Printf("Creating container '%s' with image '%s' using %s...\n", containerName, effectiveImage, b.Name())
 
 	// Ensure network exists and attach container to it (kind-like shared network)
 	networkName := cc.Spec.Options.Network
@@ -275,6 +307,7 @@ func joinAdditionalNodes(ctx context.Context, b runtime.Runtime, clusterName, im
 			runtime.Mount{Type: "bind", Source: "/lib/modules", Target: "/lib/modules", Options: []string{"ro"}},
 			runtime.Mount{Type: "bind", Source: hostTokenPath, Target: "/etc/k0s/join.token", Options: []string{"ro"}},
 		}
+		mounts = append(mounts, nodeMounts(cc, clusterName, n)...)
 
 		if rootless {
 			var rootlessMount runtime.Mount

@@ -62,9 +62,16 @@ func (d *Docker) IsRootless(ctx context.Context) (bool, error) {
 	return false, nil
 }
 
+// imageExists reports whether image is already in the local image store, so
+// locally built or loaded node images are used without a registry.
+func (d *Docker) imageExists(ctx context.Context, image string) bool {
+	_, err := d.cli.ImageInspect(ctx, image)
+	return err == nil
+}
+
 func (d *Docker) RunContainer(ctx context.Context, opts RunContainerOptions) (string, error) {
 	// Ensure image exists locally; pull if missing
-	if opts.Image != "" {
+	if opts.Image != "" && !d.imageExists(ctx, opts.Image) {
 		rc, err := d.cli.ImagePull(ctx, opts.Image, imageTypes.PullOptions{})
 		if err != nil {
 			return "", err

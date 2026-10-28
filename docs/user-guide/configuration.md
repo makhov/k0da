@@ -16,6 +16,7 @@ spec:
     args: []string              # Optional: extra k0s arguments
     config: {}                  # k0s configuration (ClusterConfig)
     manifests: []string         # Optional: list of manifest files/URLs
+    containerd: []string        # Optional: containerd config drop-ins (.toml files/URLs)
   nodes: []NodeConfig          # Optional: multi-node configuration
   options:
     network: string             # Optional: container network name
@@ -103,6 +104,40 @@ spec:
 - Applied in the order specified
 - Support both local files and remote URLs
 - Mounted read-only at `/var/lib/k0s/manifests/k0da` in the container
+
+### Containerd Drop-ins
+
+k0s's containerd imports `/etc/k0s/containerd.d/*.toml`. List drop-ins to
+add runtimes or change the CRI plugin, e.g. to test a containerd shim:
+
+```yaml
+spec:
+  k0s:
+    containerd:
+      - ./containerd/my-runtime.toml
+  nodes:
+    - role: controller
+      mounts:
+        # The shim binaries, in a directory of their own
+        - type: bind
+          source: ./bin
+          target: /opt/my-runtime/bin
+          options: ["ro"]
+```
+
+```toml
+# containerd/my-runtime.toml
+version = 3
+[plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.my-runtime]
+  runtime_type = 'io.containerd.my-runtime.v2'
+  runtime_path = '/opt/my-runtime/bin/containerd-shim-my-runtime-v2'
+```
+
+**Drop-in features:**
+
+- Files must end in `.toml`; local paths are relative to the config file, URLs are fetched
+- Bound read-only into `/etc/k0s/containerd.d/` on every node, file by file, so drop-ins already in the image stay
+- Bind shim binaries as a directory rather than single files into `/usr/local/bin`: runc seals its binary by overlay-mounting the binary's directory, where a file bind mount shows up as the image's empty placeholder
 
 ## Nodes Section
 

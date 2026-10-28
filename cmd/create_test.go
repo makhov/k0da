@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/makhov/k0da/internal/config"
@@ -252,4 +253,35 @@ func TestRootlessNodeAdjustmentsRespectsExplicitKubeletArgs(t *testing.T) {
 
 	assert.Equal(t, base, args, "must not pass --kubelet-extra-args twice")
 	assert.NotEmpty(t, mount.Source, "containerd drop-in is still required")
+}
+
+func TestNodeMounts(t *testing.T) {
+	cc := &config.ClusterConfig{
+		SourcePath: "/repo/hack/cluster.yaml",
+		Spec:       config.Spec{K0s: config.K0sSpec{Containerd: []string{"runtime.toml"}}},
+	}
+	node := &config.NodeSpec{Mounts: []config.Mount{
+		{Type: "bind", Source: "../bin/shim", Target: "/usr/local/bin/shim", Options: []string{"ro"}},
+		{Type: "bind", Source: "/abs/data", Target: "/data"},
+		{Type: "volume", Source: "cache", Target: "/cache"},
+	}}
+	t.Setenv("HOME", t.TempDir())
+	require.NoError(t, os.MkdirAll(cc.ContainerdDir("c1"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(cc.ContainerdDir("c1"), "000_runtime.toml"), nil, 0o644))
+	got := nodeMounts(cc, "c1", node)
+	require.Len(t, got, 4)
+	assert.Equal(t, filepath.Join(cc.ContainerdDir("c1"), "000_runtime.toml"), got[0].Source)
+	assert.Equal(t, "/etc/k0s/containerd.d/000_runtime.toml", got[0].Target, "drop-ins are bound file by file")
+	assert.Equal(t, "/repo/bin/shim", got[1].Source, "relative bind source resolves against the config file")
+	assert.Equal(t, "/abs/data", got[2].Source)
+	assert.Equal(t, "cache", got[3].Source, "volume names are not paths")
+
+	// A relative config path still yields absolute bind sources.
+	cc.SourcePath = "hack/cluster.yaml"
+	wd, _ := os.Getwd()
+	assert.Equal(t, wd+"/bin/shim", nodeMounts(cc, "c1", node)[1].Source)
+
+	// No drop-ins: no containerd.d mount (the image's own stays visible).
+	cc.Spec.K0s.Containerd = nil
+	assert.Len(t, nodeMounts(cc, "c1", nil), 0)
 }
