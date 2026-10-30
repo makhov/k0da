@@ -7,6 +7,7 @@
 - Lightweight and fast
 - Full k0s support with all its features
 - Works with Docker or Podman
+- Optionally runs pods on [gcr](https://github.com/makhov/gcr), a runtime that snapshots, forks, rewinds and migrates running containers (`--gcr`)
 
 ## Install
 
@@ -82,6 +83,7 @@ Flags:
   -c, --config string    path to k0da cluster config file (YAML)
   -w, --wait             wait for readiness (default true)
   -t, --timeout string   readiness timeout (default "60s")
+      --gcr string       install gcr on every node as runtime class gcr: a release (v0.0.1) or a release build's binary
 ```
 
 ## Cluster config (k0da)

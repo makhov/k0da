@@ -1,0 +1,147 @@
+// Package gcr installs gcr (github.com/makhov/gcr), a containerd runtime
+// that snapshots, forks, rewinds and migrates running containers, on k0da
+// nodes, as runtime class "gcr".
+//
+// A gcr release is one binary that carries the rest; `gcr setup`, run in a
+// node, installs it and registers the runtime with k0s's containerd
+// through /etc/k0s/containerd.d, which k0s applies on its own.
+package gcr
+
+import (
+	"bufio"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/makhov/k0da/internal/runtime"
+)
+
+// ReleaseURL is where gcr's releases are downloaded from.
+var ReleaseURL = "https://github.com/makhov/gcr/releases/download"
+
+// RuntimeClass is the manifest that lets pods ask for gcr.
+const RuntimeClass = `apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: gcr
+handler: gcr
+`
+
+// inNode is where gcr goes in a node, and the shim with it: a directory
+// of its own, as libcontainer seals its binary by overlay-mounting the
+// binary's directory.
+const inNode = "/opt/gcr"
+
+// Binary returns the path of the gcr binary for arch: binary itself if
+// given, else release version downloaded into cache (once) and checked
+// against the release's SHA256SUMS.
+func Binary(ctx context.Context, version, binary, arch, cache string) (string, error) {
+	if binary != "" {
+		if _, err := os.Stat(binary); err != nil {
+			return "", fmt.Errorf("gcr binary: %w", err)
+		}
+		return binary, nil
+	}
+	name := fmt.Sprintf("gcr-%s-linux-%s", version, arch)
+	path := filepath.Join(cache, name)
+	if _, err := os.Stat(path); err == nil {
+		return path, nil
+	}
+	if err := os.MkdirAll(cache, 0o755); err != nil {
+		return "", err
+	}
+	sums, err := fetch(ctx, version, "SHA256SUMS")
+	if err != nil {
+		return "", err
+	}
+	want := ""
+	s := bufio.NewScanner(strings.NewReader(string(sums)))
+	for s.Scan() {
+		if f := strings.Fields(s.Text()); len(f) == 2 && f[1] == name {
+			want = f[0]
+		}
+	}
+	if want == "" {
+		return "", fmt.Errorf("gcr %s has no %s (SHA256SUMS)", version, name)
+	}
+	b, err := fetch(ctx, version, name)
+	if err != nil {
+		return "", err
+	}
+	if got := sha256.Sum256(b); hex.EncodeToString(got[:]) != want {
+		return "", fmt.Errorf("gcr %s: %s does not match its checksum", version, name)
+	}
+	tmp := path + ".download"
+	if err := os.WriteFile(tmp, b, 0o755); err != nil {
+		return "", err
+	}
+	return path, os.Rename(tmp, path)
+}
+
+func fetch(ctx context.Context, version, name string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+	u := fmt.Sprintf("%s/%s/%s", ReleaseURL, version, name)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("download %s: %w", u, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("download %s: %s", u, resp.Status)
+	}
+	return io.ReadAll(resp.Body)
+}
+
+// NodeArch is the architecture of node's containers, as Go names it.
+func NodeArch(ctx context.Context, b runtime.Runtime, node string) (string, error) {
+	out, code, err := b.ExecInContainer(ctx, node, []string{"uname", "-m"})
+	if err != nil || code != 0 {
+		return "", fmt.Errorf("uname in %s: %v (exit %d)", node, err, code)
+	}
+	switch m := strings.TrimSpace(out); m {
+	case "x86_64":
+		return "amd64", nil
+	case "aarch64", "arm64":
+		return "arm64", nil
+	default:
+		return "", fmt.Errorf("gcr has no release for %s", m)
+	}
+}
+
+// Install copies gcr into node and runs its setup there, once k0s has
+// written its containerd configuration, which setup adds gcr to.
+func Install(ctx context.Context, b runtime.Runtime, node, binary string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for {
+		if _, code, err := b.ExecInContainer(ctx, node, []string{"test", "-f", "/etc/k0s/containerd.toml"}); err == nil && code == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("k0s did not write its containerd configuration in %s", node)
+		}
+		time.Sleep(time.Second)
+	}
+	if _, code, err := b.ExecInContainer(ctx, node, []string{"mkdir", "-p", inNode}); err != nil || code != 0 {
+		return fmt.Errorf("mkdir %s in %s: %v (exit %d)", inNode, node, err, code)
+	}
+	if err := b.CopyToContainer(ctx, node, binary, inNode+"/gcr"); err != nil {
+		return fmt.Errorf("copy gcr into %s: %w", node, err)
+	}
+	out, code, err := b.ExecInContainer(ctx, node, []string{inNode + "/gcr", "setup", "-bin-dir", inNode + "/bin"})
+	if err != nil || code != 0 {
+		return fmt.Errorf("gcr setup in %s (exit %d): %v\n%s", node, code, err, out)
+	}
+	return nil
+}

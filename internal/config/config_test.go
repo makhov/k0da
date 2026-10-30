@@ -91,3 +91,29 @@ func TestEffectiveK0sConfig_OverrideDoesNotRemoveDefaultKeys(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, true, feat["flag"])
 }
+
+func TestGcrSpec(t *testing.T) {
+	for name, tc := range map[string]struct {
+		spec    *GcrSpec
+		source  string
+		wantErr bool
+		want    string
+	}{
+		"version":         {spec: &GcrSpec{Version: "v0.0.1"}},
+		"binary relative": {spec: &GcrSpec{Binary: "bin/gcr"}, source: "/x/cluster.yaml", want: "/x/bin/gcr"},
+		"binary absolute": {spec: &GcrSpec{Binary: "/opt/gcr"}, source: "/x/cluster.yaml", want: "/opt/gcr"},
+		"both":            {spec: &GcrSpec{Version: "v0.0.1", Binary: "gcr"}, wantErr: true},
+		"neither":         {spec: &GcrSpec{}, wantErr: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c := ClusterConfig{Spec: Spec{Gcr: tc.spec}, SourcePath: tc.source}
+			err := c.Validate()
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("error: %v", err)
+			}
+			if tc.want != "" && c.Spec.Gcr.Binary != tc.want {
+				t.Fatalf("binary %q, want %q", c.Spec.Gcr.Binary, tc.want)
+			}
+		})
+	}
+}
