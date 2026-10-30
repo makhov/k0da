@@ -156,17 +156,16 @@ spec:
 ```
 
 or `k0da create --gcr v0.0.1` (a version) or `--gcr ./gcr` (a path).
-Then pods ask for it:
-
-```yaml
-spec:
-  runtimeClassName: gcr
-```
+It becomes the default runtime: pods created afterwards run on gcr
+whether they name it (`runtimeClassName: gcr`) or no runtime class at all.
 
 A gcr release is one binary carrying the shim and gcr's CRIU. k0da copies
-it into each node (`/opt/gcr`) and runs `gcr setup` there, which registers
-the runtime with k0s's containerd in `/etc/k0s/containerd.d/gcr.toml`; k0s
-applies it without a restart. `docker exec <node> /opt/gcr/gcr doctor`
+it into each node and runs `gcr setup` there, which installs gcr and the
+shim in `/usr/local/bin` and registers
+the runtime with k0s's containerd in `/etc/k0s/containerd.d/gcr.toml`; then
+k0da makes it containerd's default runtime (`gcr-default.toml` beside it).
+k0s applies both without a restart; pods that were already running (k0s's
+own, started before) keep their runtime. `docker exec <node> gcr doctor`
 shows what gcr can do on the node: on the stock k0s image (Alpine), gcr's
 CRIU, built against glibc, does not run, so containers run on gcr without
 checkpoints, forks, time travel or migration. gcr needs root on the nodes:

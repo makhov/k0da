@@ -540,6 +540,6 @@ func installGcr(ctx context.Context, r runtime.Runtime, cc *k0daconfig.ClusterCo
 			return err
 		}
 	}
-	fmt.Println("✅ gcr installed: pods with runtimeClassName: gcr run on it")
+	fmt.Println("✅ gcr installed: pods run on it (runtime class gcr, and the default)")
 	return nil
 }

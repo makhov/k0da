@@ -34,6 +34,14 @@ metadata:
 handler: gcr
 `
 
+// defaultRuntime makes gcr the runtime of pods that name none, beside the
+// drop-in gcr setup writes.
+const defaultRuntime = `# Written by k0da: pods without a runtimeClassName run on gcr.
+version = 3
+[plugins.'io.containerd.cri.v1.runtime'.containerd]
+  default_runtime_name = 'gcr'
+`
+
 // inNode is where gcr goes in a node, and the shim with it: a directory
 // of its own, as libcontainer seals its binary by overlay-mounting the
 // binary's directory.
@@ -139,9 +147,26 @@ func Install(ctx context.Context, b runtime.Runtime, node, binary string, timeou
 	if err := b.CopyToContainer(ctx, node, binary, inNode+"/gcr"); err != nil {
 		return fmt.Errorf("copy gcr into %s: %w", node, err)
 	}
-	out, code, err := b.ExecInContainer(ctx, node, []string{inNode + "/gcr", "setup", "-bin-dir", inNode + "/bin"})
+	// The binaries go in the node's PATH: gcr's doctor, run by setup, looks
+	// for the shim there (before v0.0.2).
+	out, code, err := b.ExecInContainer(ctx, node, []string{inNode + "/gcr", "setup", "-bin-dir", "/usr/local/bin"})
 	if err != nil || code != 0 {
 		return fmt.Errorf("gcr setup in %s (exit %d): %v\n%s", node, code, err, out)
+	}
+	// After gcr's own drop-in: a default naming a runtime containerd does
+	// not have yet would stop its CRI plugin.
+	tmp, err := os.CreateTemp("", "gcr-default-*.toml")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.WriteString(defaultRuntime); err != nil {
+		tmp.Close()
+		return err
+	}
+	tmp.Close()
+	if err := b.CopyToContainer(ctx, node, tmp.Name(), "/etc/k0s/containerd.d/gcr-default.toml"); err != nil {
+		return fmt.Errorf("make gcr the default runtime in %s: %w", node, err)
 	}
 	return nil
 }
