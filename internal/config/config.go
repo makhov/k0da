@@ -47,6 +47,18 @@ type Spec struct {
 	Nodes   []NodeSpec  `yaml:"nodes"`
 	K0s     K0sSpec     `yaml:"k0s"`
 	Options OptionsSpec `yaml:"options,omitempty"`
+	// Gcr, if set, installs gcr on every node as runtime class "gcr".
+	Gcr *GcrSpec `yaml:"gcr,omitempty"`
+}
+
+// GcrSpec says which gcr (github.com/makhov/gcr) to install: a release,
+// downloaded, or a release build's binary.
+type GcrSpec struct {
+	// Version is a gcr release, e.g. v0.0.1.
+	Version string `yaml:"version,omitempty"`
+	// Binary is a release build of gcr (one carrying the shim and CRIU),
+	// relative to the cluster config file.
+	Binary string `yaml:"binary,omitempty"`
 }
 
 type OptionsSpec struct {
@@ -152,6 +164,14 @@ func (c *ClusterConfig) Validate() error {
 	}
 	if c.Spec.Options.Network == "" {
 		c.Spec.Options.Network = DefaultNetwork
+	}
+	if g := c.Spec.Gcr; g != nil {
+		if (g.Version == "") == (g.Binary == "") {
+			return fmt.Errorf("gcr: set version or binary, one of them")
+		}
+		if g.Binary != "" && !filepath.IsAbs(g.Binary) && c.SourcePath != "" {
+			g.Binary = filepath.Join(filepath.Dir(c.SourcePath), g.Binary)
+		}
 	}
 
 	return nil

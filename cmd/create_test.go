@@ -285,3 +285,12 @@ func TestNodeMounts(t *testing.T) {
 	cc.Spec.K0s.Containerd = nil
 	assert.Len(t, nodeMounts(cc, "c1", nil), 0)
 }
+
+func TestGcrSpecFromFlag(t *testing.T) {
+	if g := gcrSpecFromFlag("v0.0.1"); g.Version != "v0.0.1" || g.Binary != "" {
+		t.Fatalf("a version: %+v", g)
+	}
+	if g := gcrSpecFromFlag("./dist/gcr"); g.Binary == "" || !filepath.IsAbs(g.Binary) {
+		t.Fatalf("a path: %+v", g)
+	}
+}

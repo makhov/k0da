@@ -10,6 +10,7 @@ import (
 	"time"
 
 	k0daconfig "github.com/makhov/k0da/internal/config"
+	"github.com/makhov/k0da/internal/gcr"
 	"github.com/makhov/k0da/internal/runtime"
 	"github.com/makhov/k0da/internal/utils"
 	"github.com/spf13/cobra"
@@ -43,7 +44,10 @@ func init() {
 	createCmd.Flags().StringVarP(&image, "image", "i", k0daconfig.DefaultK0sImageRepo+":"+k0daconfig.DefaultK0sVersion, "k0s image to use")
 	createCmd.Flags().BoolVarP(&wait, "wait", "w", true, "wait for cluster to be ready")
 	createCmd.Flags().StringVarP(&timeout, "timeout", "t", "60s", "timeout for cluster creation")
+	createCmd.Flags().StringVar(&gcrFlag, "gcr", "", "install gcr (github.com/makhov/gcr) on every node as runtime class gcr: a release (v0.0.1) or a release build's binary")
 }
+
+var gcrFlag string
 
 func runCreate(cmd *cobra.Command, args []string) error {
 	clusterName := name
@@ -55,6 +59,9 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	cc, err := k0daconfig.LoadClusterConfig(strings.TrimSpace(clusterConfigPath))
 	if err != nil {
 		return fmt.Errorf("failed to load cluster config: %w", err)
+	}
+	if g := strings.TrimSpace(gcrFlag); g != "" {
+		cc.Spec.Gcr = gcrSpecFromFlag(g)
 	}
 
 	// Determine final image with precedence: config > user-flag override > fetched stable > default
@@ -86,6 +93,9 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to determine whether %s is rootless: %w", r.Name(), err)
 	}
 	if rootless {
+		if cc.Spec.Gcr != nil {
+			return fmt.Errorf("gcr needs root on the nodes, which rootless %s does not give", r.Name())
+		}
 		fmt.Printf("Rootless %s detected; enabling user-namespace settings for kubelet and containerd\n", r.Name())
 	}
 
@@ -109,6 +119,12 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	if len(cc.Spec.Nodes) > 1 {
 		if err := joinAdditionalNodes(ctx, r, clusterName, image, wait, timeout, cc, rootless); err != nil {
 			return fmt.Errorf("failed to join additional nodes: %w", err)
+		}
+	}
+
+	if cc.Spec.Gcr != nil {
+		if err := installGcr(ctx, r, cc, clusterName); err != nil {
+			return fmt.Errorf("failed to install gcr: %w", err)
 		}
 	}
 
@@ -161,6 +177,14 @@ func createK0sCluster(ctx context.Context, b runtime.Runtime, name, image string
 	}
 	if err := utils.CopyContainerdDropInsToDir(cc, cc.ContainerdDir(name)); err != nil {
 		return fmt.Errorf("failed to stage containerd drop-ins: %w", err)
+	}
+	if cc.Spec.Gcr != nil {
+		if err := os.MkdirAll(hostK0daManifestsPath, 0o755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(hostK0daManifestsPath, "gcr-runtimeclass.yaml"), []byte(gcr.RuntimeClass), 0o644); err != nil {
+			return fmt.Errorf("failed to stage gcr's RuntimeClass: %w", err)
+		}
 	}
 
 	// Build mounts
@@ -474,4 +498,48 @@ func buildLabelsForNode(clusterName, nodeName, role string, node *k0daconfig.Nod
 		}
 	}
 	return labels
+}
+
+// gcrSpecFromFlag reads --gcr: a path to a gcr binary, or a release.
+func gcrSpecFromFlag(v string) *k0daconfig.GcrSpec {
+	if strings.ContainsRune(v, os.PathSeparator) {
+		if abs, err := filepath.Abs(v); err == nil {
+			return &k0daconfig.GcrSpec{Binary: abs}
+		}
+	}
+	if _, err := os.Stat(v); err == nil {
+		abs, _ := filepath.Abs(v)
+		return &k0daconfig.GcrSpec{Binary: abs}
+	}
+	return &k0daconfig.GcrSpec{Version: v}
+}
+
+// installGcr installs gcr on every node of the cluster.
+func installGcr(ctx context.Context, r runtime.Runtime, cc *k0daconfig.ClusterConfig, clusterName string) error {
+	nodes, err := r.ListContainersByLabel(ctx, map[string]string{k0daconfig.LabelClusterName: clusterName}, false)
+	if err != nil {
+		return err
+	}
+	wait, err := time.ParseDuration(timeout)
+	if err != nil || wait < 2*time.Minute {
+		wait = 2 * time.Minute
+	}
+	home, _ := os.UserHomeDir()
+	cache := filepath.Join(home, ".k0da", "cache", "gcr")
+	for _, n := range nodes {
+		arch, err := gcr.NodeArch(ctx, r, n.Name)
+		if err != nil {
+			return err
+		}
+		bin, err := gcr.Binary(ctx, cc.Spec.Gcr.Version, cc.Spec.Gcr.Binary, arch, cache)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("Installing gcr on '%s'...\n", n.Name)
+		if err := gcr.Install(ctx, r, n.Name, bin, wait); err != nil {
+			return err
+		}
+	}
+	fmt.Println("✅ gcr installed: pods run on it (runtime class gcr, and the default)")
+	return nil
 }

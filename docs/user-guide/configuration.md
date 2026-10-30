@@ -20,6 +20,9 @@ spec:
   nodes: []NodeConfig          # Optional: multi-node configuration
   options:
     network: string             # Optional: container network name
+  gcr:                          # Optional: install gcr as runtime class "gcr"
+    version: string             # a gcr release, e.g. v0.0.1
+    binary: string              # or a release build's binary
 ```
 
 ## k0s Section
@@ -138,6 +141,37 @@ version = 3
 - Files must end in `.toml`; local paths are relative to the config file, URLs are fetched
 - Bound read-only into `/etc/k0s/containerd.d/` on every node, file by file, so drop-ins already in the image stay
 - Bind shim binaries as a directory rather than single files into `/usr/local/bin`: runc seals its binary by overlay-mounting the binary's directory, where a file bind mount shows up as the image's empty placeholder
+
+### gcr
+
+[gcr](https://github.com/makhov/gcr) is a containerd runtime that
+snapshots, forks, rewinds and migrates running containers. k0da installs
+it on every node and adds a `gcr` RuntimeClass:
+
+```yaml
+spec:
+  gcr:
+    version: v0.0.1   # downloaded from gcr's releases, checked against their SHA256SUMS
+    # binary: ./gcr   # or a release build of gcr, relative to this file
+```
+
+or `k0da create --gcr v0.0.1` (a version) or `--gcr ./gcr` (a path).
+It becomes the default runtime: pods created afterwards run on gcr
+whether they name it (`runtimeClassName: gcr`) or no runtime class at all.
+
+A gcr release is one binary carrying the shim and gcr's CRIU. k0da copies
+it into each node and runs `gcr setup` there, which installs gcr and the
+shim in `/usr/local/bin` and registers
+the runtime with k0s's containerd in `/etc/k0s/containerd.d/gcr.toml`; then
+k0da makes it containerd's default runtime (`gcr-default.toml` beside it).
+k0s applies both without a restart; pods that were already running (k0s's
+own, started before) keep their runtime. `docker exec <node> gcr doctor`
+shows what gcr can do on the node: on the stock k0s image (Alpine), gcr's
+CRIU, built against glibc, does not run, so containers run on gcr without
+checkpoints, forks, time travel or migration. gcr needs root on the nodes:
+not with rootless Docker or Podman.
+
+Downloaded releases are kept in `~/.k0da/cache/gcr`.
 
 ## Nodes Section
 
