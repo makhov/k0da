@@ -62,3 +62,16 @@ func TestBinary(t *testing.T) {
 		t.Fatalf("local binary: %q, %v", got, err)
 	}
 }
+
+func TestContainerd17(t *testing.T) {
+	for out, want := range map[string]bool{
+		"containerd github.com/containerd/containerd 1.7.27 05044ec0a9a75232cad458027ca83437aae3f4da\n": true,
+		"containerd github.com/containerd/containerd v1.7.29 442cb34b\n":                                true,
+		"containerd github.com/containerd/containerd/v2 v2.2.1 cf6bb5a7\n":                              false,
+		"": false,
+	} {
+		if got := containerd17(out); got != want {
+			t.Errorf("%q: %v, want %v", out, got, want)
+		}
+	}
+}
