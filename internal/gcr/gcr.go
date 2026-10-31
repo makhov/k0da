@@ -52,12 +52,65 @@ func Latest(ctx context.Context) (string, error) {
 	return tag, nil
 }
 
-// RuntimeClass is the manifest that lets pods ask for gcr.
-const RuntimeClass = `apiVersion: node.k8s.io/v1
+// Manifests let pods ask for gcr, or, as it is the default, for runc
+// instead; and let kubectl gcr migrate and gcr's operator move pods
+// between nodes: the gcr-migrate runtime class their targets run on, only
+// cluster admins and the operator may use (as in gcr's deploy/gcr.yaml,
+// without its node selector: gcr is on every node), and gcr-system, where
+// they run their Jobs.
+const Manifests = `apiVersion: node.k8s.io/v1
 kind: RuntimeClass
 metadata:
   name: gcr
 handler: gcr
+---
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: runc
+handler: runc
+---
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: gcr-migrate
+handler: gcr-migrate
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gcr-system
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: gcr-migrate
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE"]
+        resources: ["pods"]
+  matchConditions:
+    - name: on-gcr-migrate
+      expression: has(object.spec.runtimeClassName) && object.spec.runtimeClassName == 'gcr-migrate'
+  validations:
+    - expression: >-
+        'system:masters' in request.userInfo.groups ||
+        request.userInfo.username == 'system:serviceaccount:gcr-system:gcr-operator'
+      message: >-
+        only cluster admins and gcr's operator may run pods on runtime class
+        gcr-migrate: its pods make a node's shim listen for a migration
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: gcr-migrate
+spec:
+  policyName: gcr-migrate
+  validationActions: [Deny]
 `
 
 // defaultRuntime makes gcr the runtime of pods that name none, beside the

@@ -161,7 +161,13 @@ command line, `k0da create --gcr` alone installs the latest release,
 On k0s v1.33 and earlier (containerd 1.7), gcr v0.0.2 or later is needed:
 v0.0.1 registers itself in a format that containerd 1.7 ignores.
 It becomes the default runtime: pods created afterwards run on gcr
-whether they name it (`runtimeClassName: gcr`) or no runtime class at all.
+whether they name it (`runtimeClassName: gcr`) or no runtime class at all;
+`runtimeClassName: runc` runs a pod on runc instead.
+
+`kubectl gcr migrate` (gcr's kubectl plugin, from its releases) moves a
+running pod to another node: k0da adds the `gcr-migrate` runtime class its
+targets run on, which only cluster admins and gcr's operator may use, and
+the `gcr-system` namespace, where it runs its Jobs.
 
 A gcr release is one binary carrying the shim and gcr's CRIU. k0da copies
 it into each node and runs `gcr setup` there, which installs gcr and the
@@ -170,10 +176,10 @@ the runtime with k0s's containerd in `/etc/k0s/containerd.d/gcr.toml`; then
 k0da makes it containerd's default runtime (`gcr-default.toml` beside it).
 k0s applies both without a restart; pods that were already running (k0s's
 own, started before) keep their runtime. `docker exec <node> gcr doctor`
-shows what gcr can do on the node: on the stock k0s image (Alpine), gcr's
-CRIU, built against glibc, does not run, and CRIU needs GNU tar, which
-the image lacks: containers run on gcr without checkpoints, forks, time
-travel or migration. gcr needs root on the nodes:
+shows what gcr can do on the node. On the stock k0s image (Alpine), gcr
+v0.1.2 and later install a static CRIU and GNU tar, so everything but GPU
+checkpoints works there; with earlier releases, containers run on gcr
+without checkpoints, forks, time travel or migration. gcr needs root on the nodes:
 not with rootless Docker or Podman.
 
 Downloaded releases are kept in `~/.k0da/cache/gcr`.

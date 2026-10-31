@@ -186,8 +186,8 @@ func createK0sCluster(ctx context.Context, b runtime.Runtime, name, image string
 		if err := os.MkdirAll(hostK0daManifestsPath, 0o755); err != nil {
 			return err
 		}
-		if err := os.WriteFile(filepath.Join(hostK0daManifestsPath, "gcr-runtimeclass.yaml"), []byte(gcr.RuntimeClass), 0o644); err != nil {
-			return fmt.Errorf("failed to stage gcr's RuntimeClass: %w", err)
+		if err := os.WriteFile(filepath.Join(hostK0daManifestsPath, "gcr-runtimeclass.yaml"), []byte(gcr.Manifests), 0o644); err != nil {
+			return fmt.Errorf("failed to stage gcr's runtime classes: %w", err)
 		}
 	}
 
