@@ -54,7 +54,7 @@ type Spec struct {
 // GcrSpec says which gcr (github.com/makhov/gcr) to install: a release,
 // downloaded, or a release build's binary.
 type GcrSpec struct {
-	// Version is a gcr release, e.g. v0.0.1.
+	// Version is a gcr release, e.g. v0.0.2.
 	Version string `yaml:"version,omitempty"`
 	// Binary is a release build of gcr (one carrying the shim and CRIU),
 	// relative to the cluster config file.

@@ -44,7 +44,7 @@ func init() {
 	createCmd.Flags().StringVarP(&image, "image", "i", k0daconfig.DefaultK0sImageRepo+":"+k0daconfig.DefaultK0sVersion, "k0s image to use")
 	createCmd.Flags().BoolVarP(&wait, "wait", "w", true, "wait for cluster to be ready")
 	createCmd.Flags().StringVarP(&timeout, "timeout", "t", "60s", "timeout for cluster creation")
-	createCmd.Flags().StringVar(&gcrFlag, "gcr", "", "install gcr (github.com/makhov/gcr) on every node as runtime class gcr: a release (v0.0.1) or a release build's binary")
+	createCmd.Flags().StringVar(&gcrFlag, "gcr", "", "install gcr (github.com/makhov/gcr) on every node as runtime class gcr: a release (v0.0.2) or a release build's binary")
 }
 
 var gcrFlag string
