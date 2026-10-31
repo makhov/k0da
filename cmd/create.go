@@ -117,7 +117,7 @@ func runCreate(cmd *cobra.Command, args []string) error {
 
 	// If multinode defined, join additional nodes to the primary
 	if len(cc.Spec.Nodes) > 1 {
-		if err := joinAdditionalNodes(ctx, r, clusterName, image, wait, timeout, cc, rootless); err != nil {
+		if err := joinAdditionalNodes(ctx, r, clusterName, finalImage, wait, timeout, cc, rootless); err != nil {
 			return fmt.Errorf("failed to join additional nodes: %w", err)
 		}
 	}
