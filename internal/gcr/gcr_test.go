@@ -4,12 +4,15 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 func TestBinary(t *testing.T) {
@@ -96,5 +99,29 @@ func TestLatest(t *testing.T) {
 	LatestURL = srv.URL + "/nothing"
 	if v, err := Latest(context.Background()); err == nil {
 		t.Fatalf("no redirect: %q, want an error", v)
+	}
+}
+
+func TestManifests(t *testing.T) {
+	var got []string
+	d := yaml.NewDecoder(strings.NewReader(Manifests))
+	for {
+		var m struct {
+			Kind     string
+			Metadata struct{ Name string }
+			Handler  string
+		}
+		if err := d.Decode(&m); err != nil {
+			if err == io.EOF {
+				break
+			}
+			t.Fatal(err)
+		}
+		got = append(got, m.Kind+"/"+m.Metadata.Name+"/"+m.Handler)
+	}
+	want := "RuntimeClass/gcr/gcr RuntimeClass/runc/runc RuntimeClass/gcr-migrate/gcr-migrate Namespace/gcr-system/ " +
+		"ValidatingAdmissionPolicy/gcr-migrate/ ValidatingAdmissionPolicyBinding/gcr-migrate/"
+	if strings.Join(got, " ") != want {
+		t.Errorf("got %v, want %s", got, want)
 	}
 }
