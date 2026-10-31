@@ -155,7 +155,9 @@ spec:
     # binary: ./gcr   # or a release build of gcr, relative to this file
 ```
 
-or `k0da create --gcr v0.0.2` (a version) or `--gcr ./gcr` (a path).
+`gcr: {}` (or `version: latest`) installs gcr's latest release. On the
+command line, `k0da create --gcr` alone installs the latest release,
+`--gcr v0.0.2` a version and `--gcr ./gcr` a path.
 On k0s v1.33 and earlier (containerd 1.7), gcr v0.0.2 or later is needed:
 v0.0.1 registers itself in a format that containerd 1.7 ignores.
 It becomes the default runtime: pods created afterwards run on gcr

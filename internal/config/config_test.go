@@ -103,7 +103,8 @@ func TestGcrSpec(t *testing.T) {
 		"binary relative": {spec: &GcrSpec{Binary: "bin/gcr"}, source: "/x/cluster.yaml", want: "/x/bin/gcr"},
 		"binary absolute": {spec: &GcrSpec{Binary: "/opt/gcr"}, source: "/x/cluster.yaml", want: "/opt/gcr"},
 		"both":            {spec: &GcrSpec{Version: "v0.0.1", Binary: "gcr"}, wantErr: true},
-		"neither":         {spec: &GcrSpec{}, wantErr: true},
+		"neither: latest": {spec: &GcrSpec{}},
+		"latest":          {spec: &GcrSpec{Version: "latest"}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			c := ClusterConfig{Spec: Spec{Gcr: tc.spec}, SourcePath: tc.source}

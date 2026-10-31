@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -23,7 +24,7 @@ var createCmd = &cobra.Command{
 	Long: `Create a new k0s cluster with the specified name.
 This command will set up a lightweight Kubernetes cluster using k0s distribution.
 The cluster name can be provided as an argument or via the --name flag.`,
-	Args: cobra.MaximumNArgs(1),
+	Args: createArgs,
 	RunE: runCreate,
 }
 
@@ -44,13 +45,16 @@ func init() {
 	createCmd.Flags().StringVarP(&image, "image", "i", k0daconfig.DefaultK0sImageRepo+":"+k0daconfig.DefaultK0sVersion, "k0s image to use")
 	createCmd.Flags().BoolVarP(&wait, "wait", "w", true, "wait for cluster to be ready")
 	createCmd.Flags().StringVarP(&timeout, "timeout", "t", "60s", "timeout for cluster creation")
-	createCmd.Flags().StringVar(&gcrFlag, "gcr", "", "install gcr (github.com/makhov/gcr) on every node as runtime class gcr: a release (v0.0.2) or a release build's binary")
+	createCmd.Flags().StringVar(&gcrFlag, "gcr", "", "install gcr (github.com/makhov/gcr) on every node as runtime class gcr: the latest release (--gcr alone), a release (v0.0.2) or a release build's binary")
+	// --gcr alone: the latest release.
+	createCmd.Flags().Lookup("gcr").NoOptDefVal = "latest"
 }
 
 var gcrFlag string
 
 func runCreate(cmd *cobra.Command, args []string) error {
 	clusterName := name
+	gcrFlag, args = gcrValueFromArgs(cmd, args)
 	if len(args) > 0 {
 		clusterName = args[0]
 	}
@@ -526,6 +530,13 @@ func installGcr(ctx context.Context, r runtime.Runtime, cc *k0daconfig.ClusterCo
 	}
 	home, _ := os.UserHomeDir()
 	cache := filepath.Join(home, ".k0da", "cache", "gcr")
+	version := cc.Spec.Gcr.Version
+	if cc.Spec.Gcr.Binary == "" && (version == "" || version == "latest") {
+		if version, err = gcr.Latest(ctx); err != nil {
+			return err
+		}
+		fmt.Printf("gcr's latest release is %s\n", version)
+	}
 	for _, n := range nodes {
 		// Workers start after the controller and join it: nothing can
 		// be run in one until its container runs.
@@ -536,7 +547,7 @@ func installGcr(ctx context.Context, r runtime.Runtime, cc *k0daconfig.ClusterCo
 		if err != nil {
 			return err
 		}
-		bin, err := gcr.Binary(ctx, cc.Spec.Gcr.Version, cc.Spec.Gcr.Binary, arch, cache)
+		bin, err := gcr.Binary(ctx, version, cc.Spec.Gcr.Binary, arch, cache)
 		if err != nil {
 			return err
 		}
@@ -547,4 +558,31 @@ func installGcr(ctx context.Context, r runtime.Runtime, cc *k0daconfig.ClusterCo
 	}
 	fmt.Println("✅ gcr installed: pods run on it (runtime class gcr, and the default)")
 	return nil
+}
+
+// gcrValueFromArgs takes back what --gcr alone left to the arguments: with
+// it, "--gcr v0.0.2" and "--gcr ./gcr" pass v0.0.2 or ./gcr as an argument,
+// not as the flag's value. A first argument that is a gcr release or a
+// file is the flag's value, as it was before --gcr alone meant latest.
+func gcrValueFromArgs(cmd *cobra.Command, args []string) (value string, rest []string) {
+	if f := cmd.Flags().Lookup("gcr"); f == nil || !f.Changed || gcrFlag != "latest" || len(args) == 0 || !looksLikeGcr(args[0]) {
+		return gcrFlag, args
+	}
+	return args[0], args[1:]
+}
+
+var gcrRelease = regexp.MustCompile(`^v\d+\.\d+\.\d+`)
+
+func looksLikeGcr(v string) bool {
+	if gcrRelease.MatchString(v) || strings.ContainsRune(v, os.PathSeparator) {
+		return true
+	}
+	_, err := os.Stat(v)
+	return err == nil
+}
+
+// createArgs is at most a cluster name, after what --gcr's value took.
+func createArgs(cmd *cobra.Command, args []string) error {
+	_, rest := gcrValueFromArgs(cmd, args)
+	return cobra.MaximumNArgs(1)(cmd, rest)
 }

@@ -54,7 +54,8 @@ type Spec struct {
 // GcrSpec says which gcr (github.com/makhov/gcr) to install: a release,
 // downloaded, or a release build's binary.
 type GcrSpec struct {
-	// Version is a gcr release, e.g. v0.0.2.
+	// Version is a gcr release, e.g. v0.0.2; "latest", or no version and
+	// no binary, is the latest release.
 	Version string `yaml:"version,omitempty"`
 	// Binary is a release build of gcr (one carrying the shim and CRIU),
 	// relative to the cluster config file.
@@ -166,8 +167,8 @@ func (c *ClusterConfig) Validate() error {
 		c.Spec.Options.Network = DefaultNetwork
 	}
 	if g := c.Spec.Gcr; g != nil {
-		if (g.Version == "") == (g.Binary == "") {
-			return fmt.Errorf("gcr: set version or binary, one of them")
+		if g.Version != "" && g.Binary != "" {
+			return fmt.Errorf("gcr: set version or binary, not both (neither installs the latest release)")
 		}
 		if g.Binary != "" && !filepath.IsAbs(g.Binary) && c.SourcePath != "" {
 			g.Binary = filepath.Join(filepath.Dir(c.SourcePath), g.Binary)

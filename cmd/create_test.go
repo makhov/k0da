@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/makhov/k0da/internal/config"
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -292,5 +293,48 @@ func TestGcrSpecFromFlag(t *testing.T) {
 	}
 	if g := gcrSpecFromFlag("./dist/gcr"); g.Binary == "" || !filepath.IsAbs(g.Binary) {
 		t.Fatalf("a path: %+v", g)
+	}
+}
+
+// --gcr alone is the latest release; "--gcr VERSION" and "--gcr PATH",
+// with a space, still give the flag its value rather than the cluster
+// its name.
+func TestGcrFlagForms(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "gcr")
+	if err := os.WriteFile(bin, nil, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		argv              []string
+		wantGcr, wantName string
+	}{
+		{[]string{"--gcr"}, "latest", ""},
+		{[]string{"--gcr", "mycluster"}, "latest", "mycluster"},
+		{[]string{"--gcr", "v0.0.2"}, "v0.0.2", ""},
+		{[]string{"--gcr", "v0.0.2", "mycluster"}, "v0.0.2", "mycluster"},
+		{[]string{"--gcr=v0.0.2", "mycluster"}, "v0.0.2", "mycluster"},
+		{[]string{"--gcr", bin, "mycluster"}, bin, "mycluster"},
+		{[]string{"mycluster"}, "", "mycluster"},
+	} {
+		gcrFlag = ""
+		cmd := &cobra.Command{Use: "create", Args: createArgs, RunE: func(*cobra.Command, []string) error { return nil }}
+		cmd.Flags().StringVar(&gcrFlag, "gcr", "", "")
+		cmd.Flags().Lookup("gcr").NoOptDefVal = "latest"
+		var name string
+		cmd.RunE = func(cmd *cobra.Command, args []string) error {
+			gcrFlag, args = gcrValueFromArgs(cmd, args)
+			if len(args) > 0 {
+				name = args[0]
+			}
+			return nil
+		}
+		cmd.SetArgs(tc.argv)
+		if err := cmd.Execute(); err != nil {
+			t.Errorf("%q: %v", tc.argv, err)
+			continue
+		}
+		if gcrFlag != tc.wantGcr || name != tc.wantName {
+			t.Errorf("%q: gcr %q, name %q; want %q, %q", tc.argv, gcrFlag, name, tc.wantGcr, tc.wantName)
+		}
 	}
 }
