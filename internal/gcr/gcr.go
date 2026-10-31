@@ -42,6 +42,14 @@ version = 3
   default_runtime_name = 'gcr'
 `
 
+// defaultRuntime17 is defaultRuntime for containerd 1.7 (k0s v1.33 and
+// earlier), which reads version 2 drop-ins only.
+const defaultRuntime17 = `# Written by k0da: pods without a runtimeClassName run on gcr.
+version = 2
+[plugins."io.containerd.grpc.v1.cri".containerd]
+  default_runtime_name = "gcr"
+`
+
 // inNode is where gcr goes in a node, and the shim with it: a directory
 // of its own, as libcontainer seals its binary by overlay-mounting the
 // binary's directory.
@@ -128,19 +136,29 @@ func NodeArch(ctx context.Context, b runtime.Runtime, node string) (string, erro
 	}
 }
 
-// Install copies gcr into node and runs its setup there, once k0s has
-// written its containerd configuration, which setup adds gcr to.
-func Install(ctx context.Context, b runtime.Runtime, node, binary string, timeout time.Duration) error {
+// WaitForK0s waits until k0s has written its containerd configuration in
+// node, which gcr setup adds gcr to. A worker writes it once it has joined;
+// until its container runs, commands in it fail, which counts as not yet.
+func WaitForK0s(ctx context.Context, b runtime.Runtime, node string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for {
 		if _, code, err := b.ExecInContainer(ctx, node, []string{"test", "-f", "/etc/k0s/containerd.toml"}); err == nil && code == 0 {
-			break
+			return nil
 		}
 		if time.Now().After(deadline) {
-			return fmt.Errorf("k0s did not write its containerd configuration in %s", node)
+			return fmt.Errorf("k0s did not write its containerd configuration in %s within %s (has the node joined?)", node, timeout)
 		}
-		time.Sleep(time.Second)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(time.Second):
+		}
 	}
+}
+
+// Install copies gcr into node and runs its setup there (WaitForK0s
+// first).
+func Install(ctx context.Context, b runtime.Runtime, node, binary string) error {
 	if _, code, err := b.ExecInContainer(ctx, node, []string{"mkdir", "-p", inNode}); err != nil || code != 0 {
 		return fmt.Errorf("mkdir %s in %s: %v (exit %d)", inNode, node, err, code)
 	}
@@ -160,7 +178,11 @@ func Install(ctx context.Context, b runtime.Runtime, node, binary string, timeou
 		return err
 	}
 	defer os.Remove(tmp.Name())
-	if _, err := tmp.WriteString(defaultRuntime); err != nil {
+	dropIn := defaultRuntime
+	if out, _, err := b.ExecInContainer(ctx, node, []string{"/var/lib/k0s/bin/containerd", "--version"}); err == nil && containerd17(out) {
+		dropIn = defaultRuntime17
+	}
+	if _, err := tmp.WriteString(dropIn); err != nil {
 		tmp.Close()
 		return err
 	}
@@ -169,4 +191,12 @@ func Install(ctx context.Context, b runtime.Runtime, node, binary string, timeou
 		return fmt.Errorf("make gcr the default runtime in %s: %w", node, err)
 	}
 	return nil
+}
+
+// containerd17 says whether containerd --version printed a 1.x release:
+// "containerd github.com/containerd/containerd 1.7.27 …" from k0s's builds,
+// "v1.7.29" from containerd's.
+func containerd17(version string) bool {
+	f := strings.Fields(version)
+	return len(f) >= 3 && strings.HasPrefix(strings.TrimPrefix(f[2], "v"), "1.")
 }

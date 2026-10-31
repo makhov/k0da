@@ -527,6 +527,11 @@ func installGcr(ctx context.Context, r runtime.Runtime, cc *k0daconfig.ClusterCo
 	home, _ := os.UserHomeDir()
 	cache := filepath.Join(home, ".k0da", "cache", "gcr")
 	for _, n := range nodes {
+		// Workers start after the controller and join it: nothing can
+		// be run in one until its container runs.
+		if err := gcr.WaitForK0s(ctx, r, n.Name, wait); err != nil {
+			return err
+		}
 		arch, err := gcr.NodeArch(ctx, r, n.Name)
 		if err != nil {
 			return err
@@ -536,7 +541,7 @@ func installGcr(ctx context.Context, r runtime.Runtime, cc *k0daconfig.ClusterCo
 			return err
 		}
 		fmt.Printf("Installing gcr on '%s'...\n", n.Name)
-		if err := gcr.Install(ctx, r, n.Name, bin, wait); err != nil {
+		if err := gcr.Install(ctx, r, n.Name, bin); err != nil {
 			return err
 		}
 	}
