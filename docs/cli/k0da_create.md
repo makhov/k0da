@@ -16,7 +16,7 @@ k0da create [cluster-name] [flags]
 
 ```
   -c, --config string    cluster config file
-      --gcr string       install gcr (github.com/makhov/gcr) on every node as runtime class gcr: a release (v0.0.2) or a release build's binary
+      --gcr string[="latest"]   install gcr (github.com/makhov/gcr) on every node as runtime class gcr: the latest release (--gcr alone), a release (v0.0.2) or a release build's binary
   -h, --help             help for create
   -i, --image string     k0s image to use (default "quay.io/k0sproject/k0s:v1.33.4-k0s.0")
   -n, --name string      name of the cluster to create (default "k0da-cluster")

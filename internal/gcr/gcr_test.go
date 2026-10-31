@@ -75,3 +75,26 @@ func TestContainerd17(t *testing.T) {
 		}
 	}
 }
+
+func TestLatest(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/releases/latest":
+			http.Redirect(w, r, "https://github.com/makhov/gcr/releases/tag/v0.0.2", http.StatusFound)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	saved := LatestURL
+	defer func() { LatestURL = saved }()
+
+	LatestURL = srv.URL + "/releases/latest"
+	if v, err := Latest(context.Background()); err != nil || v != "v0.0.2" {
+		t.Fatalf("%q, %v; want v0.0.2", v, err)
+	}
+	LatestURL = srv.URL + "/nothing"
+	if v, err := Latest(context.Background()); err == nil {
+		t.Fatalf("no redirect: %q, want an error", v)
+	}
+}

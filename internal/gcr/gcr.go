@@ -26,6 +26,32 @@ import (
 // ReleaseURL is where gcr's releases are downloaded from.
 var ReleaseURL = "https://github.com/makhov/gcr/releases/download"
 
+// LatestURL redirects to gcr's latest release, whose tag ends the URL it
+// redirects to: no API call, so no rate limit.
+var LatestURL = "https://github.com/makhov/gcr/releases/latest"
+
+// Latest is gcr's latest release, such as v0.0.2.
+func Latest(ctx context.Context) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, LatestURL, nil)
+	if err != nil {
+		return "", err
+	}
+	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("gcr's latest release: %w", err)
+	}
+	resp.Body.Close()
+	loc := resp.Header.Get("Location")
+	_, tag, ok := strings.Cut(loc, "/releases/tag/")
+	if !ok || !strings.HasPrefix(tag, "v") || strings.Contains(tag, "/") {
+		return "", fmt.Errorf("gcr's latest release: %s answered %s, redirecting to %q", LatestURL, resp.Status, loc)
+	}
+	return tag, nil
+}
+
 // RuntimeClass is the manifest that lets pods ask for gcr.
 const RuntimeClass = `apiVersion: node.k8s.io/v1
 kind: RuntimeClass
