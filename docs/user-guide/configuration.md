@@ -21,7 +21,7 @@ spec:
   options:
     network: string             # Optional: container network name
   gcr:                          # Optional: install gcr as runtime class "gcr"
-    version: string             # a gcr release, e.g. v0.0.1
+    version: string             # a gcr release, e.g. v0.0.2
     binary: string              # or a release build's binary
 ```
 
@@ -151,11 +151,13 @@ it on every node and adds a `gcr` RuntimeClass:
 ```yaml
 spec:
   gcr:
-    version: v0.0.1   # downloaded from gcr's releases, checked against their SHA256SUMS
+    version: v0.0.2   # downloaded from gcr's releases, checked against their SHA256SUMS
     # binary: ./gcr   # or a release build of gcr, relative to this file
 ```
 
-or `k0da create --gcr v0.0.1` (a version) or `--gcr ./gcr` (a path).
+or `k0da create --gcr v0.0.2` (a version) or `--gcr ./gcr` (a path).
+On k0s v1.33 and earlier (containerd 1.7), gcr v0.0.2 or later is needed:
+v0.0.1 registers itself in a format that containerd 1.7 ignores.
 It becomes the default runtime: pods created afterwards run on gcr
 whether they name it (`runtimeClassName: gcr`) or no runtime class at all.
 
@@ -167,8 +169,9 @@ k0da makes it containerd's default runtime (`gcr-default.toml` beside it).
 k0s applies both without a restart; pods that were already running (k0s's
 own, started before) keep their runtime. `docker exec <node> gcr doctor`
 shows what gcr can do on the node: on the stock k0s image (Alpine), gcr's
-CRIU, built against glibc, does not run, so containers run on gcr without
-checkpoints, forks, time travel or migration. gcr needs root on the nodes:
+CRIU, built against glibc, does not run, and CRIU needs GNU tar, which
+the image lacks: containers run on gcr without checkpoints, forks, time
+travel or migration. gcr needs root on the nodes:
 not with rootless Docker or Podman.
 
 Downloaded releases are kept in `~/.k0da/cache/gcr`.

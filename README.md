@@ -83,7 +83,7 @@ Flags:
   -c, --config string    path to k0da cluster config file (YAML)
   -w, --wait             wait for readiness (default true)
   -t, --timeout string   readiness timeout (default "60s")
-      --gcr string       install gcr on every node as runtime class gcr: a release (v0.0.1) or a release build's binary
+      --gcr string       install gcr on every node as runtime class gcr: a release (v0.0.2) or a release build's binary
 ```
 
 ## Cluster config (k0da)
