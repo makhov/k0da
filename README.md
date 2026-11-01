@@ -84,6 +84,7 @@ Flags:
   -w, --wait             wait for readiness (default true)
   -t, --timeout string   readiness timeout (default "60s")
       --gcr string[="latest"]   install gcr (github.com/makhov/gcr) on every node as runtime class gcr: the latest release (--gcr alone), a release (v0.0.2) or a release build's binary
+      --gcr-operator            with --gcr, also run gcr-operator: pods that opt in move to another node instead of being evicted when theirs is drained
 ```
 
 ## Cluster config (k0da)
@@ -157,6 +158,28 @@ Notes:
 - Manifest paths may be absolute or relative to the config file location.
 - Manifests are mounted read-only into `/var/lib/k0s/manifests/k0da` and k0s processes them automatically.
 - Order is preserved by prefixing filenames with a zero-padded index.
+
+## gcr
+
+`--gcr` makes [gcr](https://makhov.github.io/gcr/) the default runtime of every node, with a `runc` RuntimeClass for pods that want runc:
+
+- k0da installs gcr on each node itself, from a release or a binary (`--gcr ./gcr`);
+- k0s installs gcr's [Helm chart](https://github.com/makhov/gcr/tree/main/charts/gcr) (`oci://ghcr.io/makhov/charts/gcr`) through its Helm extension, into `gcr-system`: the `gcr` and `gcr-migrate` RuntimeClasses, the admission policy that guards `gcr-migrate`, and, with `--gcr-operator`, [gcr-operator](https://makhov.github.io/gcr/operator/).
+
+k0da uses the latest gcr release and the latest chart unless told otherwise. In the cluster config:
+
+```yaml
+spec:
+  gcr:
+    version: v0.1.6        # a gcr release; or binary: ./gcr
+    chart: 0.1.1           # the chart's version
+    operator: true
+    values:                # more of the chart's values
+      operator:
+        registry: registry.example.com/gcr/checkpoints
+```
+
+Creating the cluster needs ghcr.io for the chart, as it needs GitHub for the release.
 
 ## Image loading
 

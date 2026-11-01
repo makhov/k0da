@@ -52,97 +52,14 @@ func Latest(ctx context.Context) (string, error) {
 	return tag, nil
 }
 
-// Manifests let pods ask for gcr, or, as it is the default, for runc
-// instead; and let kubectl gcr migrate and gcr's operator move pods
-// between nodes: the gcr-migrate runtime class their targets run on, only
-// cluster admins and the operator may use (as in gcr's deploy/gcr.yaml,
-// without its node selector: gcr is on every node), and gcr-system, where
-// they run their Jobs.
+// Manifests let pods ask for runc, as gcr is the default runtime. gcr's
+// own runtime classes, its admission policy and its operator come from
+// gcr's Helm chart (HelmChart), which k0s installs.
 const Manifests = `apiVersion: node.k8s.io/v1
-kind: RuntimeClass
-metadata:
-  name: gcr
-handler: gcr
----
-apiVersion: node.k8s.io/v1
 kind: RuntimeClass
 metadata:
   name: runc
 handler: runc
----
-apiVersion: node.k8s.io/v1
-kind: RuntimeClass
-metadata:
-  name: gcr-migrate
-handler: gcr-migrate
----
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: gcr-system
----
-apiVersion: admissionregistration.k8s.io/v1
-kind: ValidatingAdmissionPolicy
-metadata:
-  name: gcr-migrate
-spec:
-  failurePolicy: Fail
-  paramKind:
-    apiVersion: v1
-    kind: ConfigMap
-  matchConstraints:
-    resourceRules:
-      - apiGroups: [""]
-        apiVersions: ["v1"]
-        operations: ["CREATE"]
-        resources: ["pods"]
-  matchConditions:
-    - name: on-gcr-migrate
-      expression: has(object.spec.runtimeClassName) && object.spec.runtimeClassName == 'gcr-migrate'
-  variables:
-    - name: annotations
-      expression: 'has(object.metadata.annotations) ? object.metadata.annotations : {}'
-    - name: restore
-      expression: request.namespace + '.' + object.metadata.name
-  validations:
-    - expression: >-
-        'system:masters' in request.userInfo.groups ||
-        request.userInfo.username == 'system:serviceaccount:gcr-system:gcr-operator' ||
-        (request.userInfo.username in ['system:serviceaccount:kube-system:statefulset-controller', 'system:kube-controller-manager'] &&
-        !('gcr.dev/migrate-in' in variables.annotations) &&
-        'gcr.dev/restore-token' in variables.annotations && variables.annotations['gcr.dev/restore-token'] != '' &&
-        'gcr.dev/fork-from' in variables.annotations &&
-        params != null && has(params.data) && variables.restore in params.data &&
-        params.data[variables.restore].startsWith('{"token":"' + variables.annotations['gcr.dev/restore-token'] +
-        '","dir":"' + variables.annotations['gcr.dev/fork-from'] + '",'))
-      message: >-
-        only cluster admins and gcr's operator may run pods on runtime class
-        gcr-migrate (and StatefulSets, to restore a pod gcr's operator moves):
-        its pods make a node's shim listen for a migration, or restore from
-        a checkpoint on the node
----
-apiVersion: admissionregistration.k8s.io/v1
-kind: ValidatingAdmissionPolicyBinding
-metadata:
-  name: gcr-migrate
-spec:
-  policyName: gcr-migrate
-  paramRef:
-    name: gcr-restores
-    namespace: gcr-system
-    # This file makes it: were it missing, no pod could run on
-    # gcr-migrate, rather than any.
-    parameterNotFoundAction: Deny
-  validationActions: [Deny]
----
-# The pending restores of StatefulSets' pods gcr's operator moves:
-# NAMESPACE.NAME to the restore, which it writes, and the gcr-migrate
-# policy reads.
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: gcr-restores
-  namespace: gcr-system
 `
 
 // defaultRuntime makes gcr the runtime of pods that name none, beside the

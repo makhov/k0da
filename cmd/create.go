@@ -48,9 +48,13 @@ func init() {
 	createCmd.Flags().StringVar(&gcrFlag, "gcr", "", "install gcr (github.com/makhov/gcr) on every node as runtime class gcr: the latest release (--gcr alone), a release (v0.0.2) or a release build's binary")
 	// --gcr alone: the latest release.
 	createCmd.Flags().Lookup("gcr").NoOptDefVal = "latest"
+	createCmd.Flags().BoolVar(&gcrOperator, "gcr-operator", false, "with --gcr, also run gcr-operator: pods that opt in move to another node instead of being evicted when theirs is drained")
 }
 
-var gcrFlag string
+var (
+	gcrFlag     string
+	gcrOperator bool
+)
 
 func runCreate(cmd *cobra.Command, args []string) error {
 	clusterName := name
@@ -66,6 +70,18 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	}
 	if g := strings.TrimSpace(gcrFlag); g != "" {
 		cc.Spec.Gcr = gcrSpecFromFlag(g)
+	}
+	if gcrOperator {
+		if cc.Spec.Gcr == nil {
+			return fmt.Errorf("--gcr-operator needs gcr (--gcr)")
+		}
+		cc.Spec.Gcr.Operator = true
+	}
+	if cc.Spec.Gcr != nil {
+		// Before the k0s config is written: k0s installs gcr's chart.
+		if err := gcrChart(context.Background(), cc); err != nil {
+			return err
+		}
 	}
 
 	// Determine final image with precedence: config > user-flag override > fetched stable > default
@@ -186,8 +202,8 @@ func createK0sCluster(ctx context.Context, b runtime.Runtime, name, image string
 		if err := os.MkdirAll(hostK0daManifestsPath, 0o755); err != nil {
 			return err
 		}
-		if err := os.WriteFile(filepath.Join(hostK0daManifestsPath, "gcr-runtimeclass.yaml"), []byte(gcr.Manifests), 0o644); err != nil {
-			return fmt.Errorf("failed to stage gcr's runtime classes: %w", err)
+		if err := os.WriteFile(filepath.Join(hostK0daManifestsPath, "runc-runtimeclass.yaml"), []byte(gcr.Manifests), 0o644); err != nil {
+			return fmt.Errorf("failed to stage the runc runtime class: %w", err)
 		}
 	}
 
@@ -518,6 +534,41 @@ func gcrSpecFromFlag(v string) *k0daconfig.GcrSpec {
 	return &k0daconfig.GcrSpec{Version: v}
 }
 
+// gcrChart resolves the gcr release to install and the chart version, and
+// adds gcr's chart to the k0s config: its runtime classes, admission
+// policy and, if asked for, operator. The chart's image is the release on
+// the nodes; a binary's, the chart's own.
+func gcrChart(ctx context.Context, cc *k0daconfig.ClusterConfig) error {
+	g := cc.Spec.Gcr
+	if g.Binary == "" && (g.Version == "" || g.Version == "latest") {
+		v, err := gcr.Latest(ctx)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("gcr's latest release is %s\n", v)
+		g.Version = v
+	}
+	chart := g.Chart
+	if chart == "" || chart == "latest" {
+		v, err := gcr.LatestChart(ctx)
+		if err != nil {
+			return err
+		}
+		chart = v
+	}
+	image := ""
+	if g.Binary == "" {
+		image = g.Version
+	}
+	entry, err := gcr.HelmChart(chart, image, g.Operator, g.Values)
+	if err != nil {
+		return err
+	}
+	cc.AddHelmChart(entry)
+	fmt.Printf("gcr's chart %s (%s), operator %v\n", chart, gcr.Chart, g.Operator)
+	return nil
+}
+
 // installGcr installs gcr on every node of the cluster.
 func installGcr(ctx context.Context, r runtime.Runtime, cc *k0daconfig.ClusterConfig, clusterName string) error {
 	nodes, err := r.ListContainersByLabel(ctx, map[string]string{k0daconfig.LabelClusterName: clusterName}, false)
@@ -530,13 +581,7 @@ func installGcr(ctx context.Context, r runtime.Runtime, cc *k0daconfig.ClusterCo
 	}
 	home, _ := os.UserHomeDir()
 	cache := filepath.Join(home, ".k0da", "cache", "gcr")
-	version := cc.Spec.Gcr.Version
-	if cc.Spec.Gcr.Binary == "" && (version == "" || version == "latest") {
-		if version, err = gcr.Latest(ctx); err != nil {
-			return err
-		}
-		fmt.Printf("gcr's latest release is %s\n", version)
-	}
+	version := cc.Spec.Gcr.Version // resolved by gcrChart
 	for _, n := range nodes {
 		// Workers start after the controller and join it: nothing can
 		// be run in one until its container runs.
