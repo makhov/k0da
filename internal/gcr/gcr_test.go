@@ -119,8 +119,8 @@ func TestManifests(t *testing.T) {
 		}
 		got = append(got, m.Kind+"/"+m.Metadata.Name+"/"+m.Handler)
 	}
-	want := "RuntimeClass/gcr/gcr RuntimeClass/runc/runc RuntimeClass/gcr-migrate/gcr-migrate Namespace/gcr-system/ " +
-		"ValidatingAdmissionPolicy/gcr-migrate/ ValidatingAdmissionPolicyBinding/gcr-migrate/ ConfigMap/gcr-restores/"
+	// gcr's own come from its chart.
+	want := "RuntimeClass/runc/runc"
 	if strings.Join(got, " ") != want {
 		t.Errorf("got %v, want %s", got, want)
 	}

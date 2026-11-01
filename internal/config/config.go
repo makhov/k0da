@@ -60,6 +60,39 @@ type GcrSpec struct {
 	// Binary is a release build of gcr (one carrying the shim and CRIU),
 	// relative to the cluster config file.
 	Binary string `yaml:"binary,omitempty"`
+	// Chart is the version of gcr's Helm chart (ghcr.io/makhov/charts/gcr),
+	// which k0s installs: gcr's runtime classes, its admission policy, and
+	// gcr-operator with Operator. "" or "latest" is the latest.
+	Chart string `yaml:"chart,omitempty"`
+	// Operator also runs gcr-operator, which moves pods that opt in instead
+	// of evicting them when their node is drained.
+	Operator bool `yaml:"operator,omitempty"`
+	// Values are more of the chart's values (its values.yaml), such as
+	// operator.registry.
+	Values map[string]any `yaml:"values,omitempty"`
+}
+
+// AddHelmChart adds chart (an entry of k0s's extensions.helm.charts) to the
+// k0s config, after the charts it has.
+func (c *ClusterConfig) AddHelmChart(chart map[string]any) {
+	if c.Spec.K0s.Config == nil {
+		c.Spec.K0s.Config = map[string]any{}
+	}
+	cfg := c.Spec.K0s.Config
+	spec := child(cfg, "spec")
+	helm := child(child(spec, "extensions"), "helm")
+	charts, _ := helm["charts"].([]any)
+	helm["charts"] = append(charts, chart)
+}
+
+// child is m[key], a map, made if missing.
+func child(m map[string]any, key string) map[string]any {
+	if c, ok := m[key].(map[string]any); ok {
+		return c
+	}
+	c := map[string]any{}
+	m[key] = c
+	return c
 }
 
 type OptionsSpec struct {

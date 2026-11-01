@@ -118,3 +118,29 @@ func TestGcrSpec(t *testing.T) {
 		})
 	}
 }
+
+// gcr's chart goes after the charts the cluster config has, into the
+// effective k0s config.
+func TestAddHelmChart(t *testing.T) {
+	c := &ClusterConfig{}
+	c.Spec.K0s.Config = map[string]any{"spec": map[string]any{
+		"extensions": map[string]any{"helm": map[string]any{"charts": []any{map[string]any{"name": "theirs"}}}},
+		"network":    map[string]any{"provider": "calico"},
+	}}
+	c.AddHelmChart(map[string]any{"name": "gcr"})
+	eff := c.EffectiveK0sConfig()
+	spec := eff["spec"].(map[string]any)
+	charts := spec["extensions"].(map[string]any)["helm"].(map[string]any)["charts"].([]any)
+	if len(charts) != 2 || charts[0].(map[string]any)["name"] != "theirs" || charts[1].(map[string]any)["name"] != "gcr" {
+		t.Fatalf("charts %v", charts)
+	}
+	if spec["network"].(map[string]any)["provider"] != "calico" {
+		t.Errorf("lost the rest of the config: %v", spec)
+	}
+	// And with no k0s config at all.
+	c = &ClusterConfig{}
+	c.AddHelmChart(map[string]any{"name": "gcr"})
+	if n := len(c.EffectiveK0sConfig()["spec"].(map[string]any)["extensions"].(map[string]any)["helm"].(map[string]any)["charts"].([]any)); n != 1 {
+		t.Fatalf("%d charts", n)
+	}
+}
