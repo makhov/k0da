@@ -10,6 +10,7 @@ import (
 	k0daconfig "github.com/makhov/k0da/internal/config"
 	"github.com/makhov/k0da/internal/runtime"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 )
 
 // fakeRuntime implements runtime.Runtime for tests
@@ -122,6 +123,82 @@ users:
 	require.Len(t, kc.Clusters, 1)
 	require.Equal(t, "k0da-test", kc.Clusters[0].Name)
 	require.Equal(t, "https://127.0.0.1:52345", kc.Clusters[0].Cluster.Server)
+}
+
+// What k0da doesn't model in a kubeconfig, such as a Rancher token, must
+// survive it adding and removing its own clusters.
+func TestKubeconfigKeepsOtherClusters(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	t.Setenv("KUBECONFIG", "")
+
+	existing := `apiVersion: v1
+kind: Config
+clusters:
+- name: rancher
+  cluster:
+    server: https://rancher.example.com/k8s/clusters/c-m-abcd
+    insecure-skip-tls-verify: true
+    proxy-url: http://proxy.example.com:3128
+contexts:
+- name: rancher
+  context:
+    cluster: rancher
+    user: rancher
+    namespace: apps
+current-context: rancher
+users:
+- name: rancher
+  user:
+    token: kubeconfig-user-abc:secret
+- name: eks
+  user:
+    exec:
+      apiVersion: client.authentication.k8s.io/v1beta1
+      command: aws
+      args: [eks, get-token, --cluster-name, prod]
+extensions:
+- name: something
+  extension:
+    key: value
+`
+	path := filepath.Join(tmp, ".kube", "config")
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+	require.NoError(t, os.WriteFile(path, []byte(existing), 0o600))
+
+	r := &fakeRuntime{
+		execStdout: `apiVersion: v1
+kind: Config
+clusters:
+- name: k0s
+  cluster:
+    server: https://127.0.0.1:6443
+    certificate-authority-data: Cg==
+contexts:
+- name: k0s
+  context:
+    cluster: k0s
+    user: k0s
+users:
+- name: k0s
+  user:
+    client-certificate-data: Cg==
+    client-key-data: Cg==
+`,
+		portIP: "0.0.0.0",
+		port:   52345,
+	}
+	require.NoError(t, AddClusterToKubeconfig(context.Background(), r, "test", "test"))
+	require.NoError(t, RemoveClusterFromKubeconfig("test"))
+
+	var want, got map[string]interface{}
+	require.NoError(t, yaml.Unmarshal([]byte(existing), &want))
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.NoError(t, yaml.Unmarshal(data, &got))
+	delete(got, "current-context")
+	delete(want, "current-context")
+	require.Equal(t, want, got)
 }
 
 func TestGetContainerPort(t *testing.T) {

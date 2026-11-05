@@ -114,7 +114,9 @@ func GetContainerPort(ctx context.Context, b runtime.Runtime, containerName stri
 	return "", lastErr
 }
 
-// Kubeconfig structures for proper parsing
+// Kubeconfig structures for proper parsing. Each keeps the fields it doesn't
+// name in Extra, so that rewriting a kubeconfig keeps what other tools put
+// in it: tokens, exec plugins, auth providers, namespaces, extensions.
 type Kubeconfig struct {
 	APIVersion     string                 `yaml:"apiVersion"`
 	Kind           string                 `yaml:"kind"`
@@ -123,36 +125,43 @@ type Kubeconfig struct {
 	CurrentContext string                 `yaml:"current-context"`
 	Users          []NamedUser            `yaml:"users"`
 	Preferences    map[string]interface{} `yaml:"preferences,omitempty"`
+	Extra          map[string]interface{} `yaml:",inline"`
 }
 
 type NamedCluster struct {
-	Name    string  `yaml:"name"`
-	Cluster Cluster `yaml:"cluster"`
+	Name    string                 `yaml:"name"`
+	Cluster Cluster                `yaml:"cluster"`
+	Extra   map[string]interface{} `yaml:",inline"`
 }
 
 type Cluster struct {
-	Server                   string `yaml:"server"`
-	CertificateAuthorityData string `yaml:"certificate-authority-data"`
+	Server                   string                 `yaml:"server"`
+	CertificateAuthorityData string                 `yaml:"certificate-authority-data,omitempty"`
+	Extra                    map[string]interface{} `yaml:",inline"`
 }
 
 type NamedContext struct {
-	Name    string  `yaml:"name"`
-	Context Context `yaml:"context"`
+	Name    string                 `yaml:"name"`
+	Context Context                `yaml:"context"`
+	Extra   map[string]interface{} `yaml:",inline"`
 }
 
 type Context struct {
-	Cluster string `yaml:"cluster"`
-	User    string `yaml:"user"`
+	Cluster string                 `yaml:"cluster"`
+	User    string                 `yaml:"user"`
+	Extra   map[string]interface{} `yaml:",inline"`
 }
 
 type NamedUser struct {
-	Name string `yaml:"name"`
-	User User   `yaml:"user"`
+	Name  string                 `yaml:"name"`
+	User  User                   `yaml:"user"`
+	Extra map[string]interface{} `yaml:",inline"`
 }
 
 type User struct {
-	ClientCertificateData string `yaml:"client-certificate-data"`
-	ClientKeyData         string `yaml:"client-key-data"`
+	ClientCertificateData string                 `yaml:"client-certificate-data,omitempty"`
+	ClientKeyData         string                 `yaml:"client-key-data,omitempty"`
+	Extra                 map[string]interface{} `yaml:",inline"`
 }
 
 // LoadKubeconfig loads a kubeconfig from file
