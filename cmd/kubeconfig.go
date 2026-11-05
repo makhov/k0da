@@ -1,10 +1,12 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
+	"io"
 	"os"
-	"path/filepath"
 
+	"github.com/makhov/k0da/internal/runtime"
 	"github.com/makhov/k0da/internal/utils"
 	"github.com/spf13/cobra"
 )
@@ -15,91 +17,48 @@ var (
 
 // kubeconfigCmd represents the kubeconfig command
 var kubeconfigCmd = &cobra.Command{
-	Use:   "kubeconfig",
+	Use:   "kubeconfig [cluster-name]",
 	Short: "Print kubeconfig for a specific cluster",
 	Long: `Print the kubeconfig for a specific k0da cluster.
-This command extracts the kubeconfig for the specified cluster from the unified kubeconfig
-and prints it to stdout, making it easy to use with kubectl or other tools.`,
+The kubeconfig comes from the cluster's controller, so it works wherever
+k0da create wrote its copy (the first file of $KUBECONFIG, or ~/.kube/config).`,
+	Args: cobra.MaximumNArgs(1),
 	RunE: runKubeconfig,
 }
 
 func init() {
 	rootCmd.AddCommand(kubeconfigCmd)
-	kubeconfigCmd.Flags().StringVarP(&kubeconfigClusterName, "name", "n", DefaultClusterName, "name of the cluster (required)")
+	kubeconfigCmd.Flags().StringVarP(&kubeconfigClusterName, "name", "n", DefaultClusterName, "name of the cluster")
 }
 
 func runKubeconfig(cmd *cobra.Command, args []string) error {
-	unifiedKubeconfigPath := filepath.Join(os.Getenv("HOME"), ".kube", "config")
-
-	// Check if unified kubeconfig exists
-	if _, err := os.Stat(unifiedKubeconfigPath); os.IsNotExist(err) {
-		return fmt.Errorf("no unified kubeconfig found at %s. Create a cluster first", unifiedKubeconfigPath)
+	name := kubeconfigClusterName
+	if len(args) > 0 {
+		name = args[0]
 	}
-
-	// Load the unified kubeconfig
-	kubeconfig, err := utils.LoadKubeconfig(unifiedKubeconfigPath)
+	ctx := context.Background()
+	b, err := runtime.Detect(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to load unified kubeconfig: %w", err)
+		return err
 	}
-	// Find the cluster context
-	clusterContext := "k0da-" + kubeconfigClusterName
-	var foundContext *utils.NamedContext
-	for _, context := range kubeconfig.Contexts {
-		if context.Name == clusterContext {
-			foundContext = &context
-			break
-		}
+	return printKubeconfig(ctx, b, name, os.Stdout)
+}
+
+// printKubeconfig writes the admin kubeconfig of the named cluster to w.
+// The cluster's controller is the container named after the cluster.
+func printKubeconfig(ctx context.Context, b runtime.Runtime, name string, w io.Writer) error {
+	running, err := b.ContainerIsRunning(ctx, name)
+	if err != nil || !running {
+		return fmt.Errorf("cluster '%s' not found or not running (see k0da list)", name)
 	}
-
-	if foundContext == nil {
-		return fmt.Errorf("cluster '%s' not found. Available clusters: %v", kubeconfigClusterName, getClusterNames(kubeconfig.Contexts))
+	kc, err := utils.ClusterKubeconfig(ctx, b, name, name)
+	if err != nil {
+		return fmt.Errorf("cluster '%s': %w", name, err)
 	}
-
-	// Create a new kubeconfig with only the specified cluster
-	clusterKubeconfig := &utils.Kubeconfig{
-		APIVersion:     kubeconfig.APIVersion,
-		Kind:           kubeconfig.Kind,
-		CurrentContext: clusterContext,
-		Clusters:       []utils.NamedCluster{},
-		Contexts:       []utils.NamedContext{},
-		Users:          []utils.NamedUser{},
-	}
-
-	// Find and add the cluster
-	for _, cluster := range kubeconfig.Clusters {
-		if cluster.Name == foundContext.Context.Cluster {
-			clusterKubeconfig.Clusters = append(clusterKubeconfig.Clusters, cluster)
-			break
-		}
-	}
-
-	// Add the context
-	clusterKubeconfig.Contexts = append(clusterKubeconfig.Contexts, *foundContext)
-
-	// Find and add the user
-	for _, user := range kubeconfig.Users {
-		if user.Name == foundContext.Context.User {
-			clusterKubeconfig.Users = append(clusterKubeconfig.Users, user)
-			break
-		}
-	}
-
-	// Marshal and print the kubeconfig
-	data, err := utils.MarshalKubeconfig(clusterKubeconfig)
+	data, err := utils.MarshalKubeconfig(kc)
 	if err != nil {
 		return fmt.Errorf("failed to marshal kubeconfig: %w", err)
 	}
-
-	fmt.Print(string(data))
-	return nil
-}
-
-func getClusterNames(contexts []utils.NamedContext) []string {
-	names := make([]string, 0, len(contexts))
-	for _, context := range contexts {
-		if len(context.Name) > 5 && context.Name[:5] == "k0da-" {
-			names = append(names, context.Name[5:])
-		}
-	}
-	return names
+	_, err = w.Write(data)
+	return err
 }

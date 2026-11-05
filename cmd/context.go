@@ -3,7 +3,6 @@ package cmd
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"github.com/makhov/k0da/internal/utils"
 	"github.com/spf13/cobra"
@@ -17,7 +16,8 @@ var (
 var contextCmd = &cobra.Command{
 	Use:   "context [context-name]",
 	Short: "Switch to a different k0da cluster context",
-	Long: `Switch to a different k0da cluster context in the unified kubeconfig.
+	Long: `Switch to a different k0da cluster context in the default kubeconfig
+(the first file of $KUBECONFIG, or ~/.kube/config), where k0da create adds it.
 This command allows you to switch between different k0da clusters without
 specifying the kubeconfig file each time.`,
 	Args: cobra.MaximumNArgs(1),
@@ -30,7 +30,7 @@ func init() {
 }
 
 func runContext(cmd *cobra.Command, args []string) error {
-	unifiedKubeconfigPath := filepath.Join(os.Getenv("HOME"), ".k0da", "clusters", "kubeconfig")
+	unifiedKubeconfigPath := utils.DefaultKubeconfigPath()
 
 	// Check if unified kubeconfig exists
 	if _, err := os.Stat(unifiedKubeconfigPath); os.IsNotExist(err) {

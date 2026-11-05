@@ -324,9 +324,9 @@ func RemoveAllFiles(dir string) error {
 	return nil
 }
 
-// defaultKubeconfigPath returns the path to the default kubeconfig file
+// DefaultKubeconfigPath returns the path to the default kubeconfig file
 // (first entry of KUBECONFIG if set, otherwise $HOME/.kube/config)
-func defaultKubeconfigPath() string {
+func DefaultKubeconfigPath() string {
 	if v := strings.TrimSpace(os.Getenv("KUBECONFIG")); v != "" {
 		parts := strings.Split(v, string(os.PathListSeparator))
 		if len(parts) > 0 && strings.TrimSpace(parts[0]) != "" {
@@ -342,33 +342,50 @@ func defaultKubeconfigPath() string {
 	return filepath.Join(home, ".kube", "config")
 }
 
-// AddClusterToKubeconfig adds a new cluster to the default kubeconfig
-func AddClusterToKubeconfig(ctx context.Context, b runtime.Runtime, clusterName, containerName string) error {
-	// Get the original kubeconfig from the container
+// ClusterKubeconfig returns the admin kubeconfig of the cluster whose
+// controller is containerName, straight from k0s: its cluster, context and
+// user are named k0da-<clusterName>, and its server is the API port the
+// controller publishes on the host.
+func ClusterKubeconfig(ctx context.Context, b runtime.Runtime, clusterName, containerName string) (*Kubeconfig, error) {
 	stdout, exit, err := b.ExecInContainer(ctx, containerName, []string{"k0s", "kubeconfig", "admin"})
 	if err != nil || exit != 0 {
-		return fmt.Errorf("failed to get kubeconfig from container: %v", err)
+		return nil, fmt.Errorf("failed to get kubeconfig from container: exit %d: %v", exit, err)
 	}
-
-	// Parse the container kubeconfig
-	var containerKubeconfig Kubeconfig
-	if err := yaml.Unmarshal([]byte(stdout), &containerKubeconfig); err != nil {
-		return fmt.Errorf("failed to parse container kubeconfig: %w", err)
+	var admin Kubeconfig
+	if err := yaml.Unmarshal([]byte(stdout), &admin); err != nil {
+		return nil, fmt.Errorf("failed to parse container kubeconfig: %w", err)
 	}
-
-	// Get the port mapping for the container
+	if len(admin.Clusters) == 0 || len(admin.Users) == 0 {
+		return nil, fmt.Errorf("container kubeconfig has no cluster or user")
+	}
 	port, err := GetContainerPort(ctx, b, containerName)
 	if err != nil {
-		return fmt.Errorf("failed to get container port: %w", err)
+		return nil, fmt.Errorf("failed to get container port: %w", err)
 	}
 
-	// Update the server URL with correct host and port
-	if len(containerKubeconfig.Clusters) > 0 {
-		containerKubeconfig.Clusters[0].Cluster.Server = fmt.Sprintf("https://127.0.0.1:%s", port)
+	name := fmt.Sprintf("k0da-%s", clusterName)
+	cluster := admin.Clusters[0].Cluster
+	cluster.Server = fmt.Sprintf("https://127.0.0.1:%s", port)
+	return &Kubeconfig{
+		APIVersion:     "v1",
+		Kind:           "Config",
+		Clusters:       []NamedCluster{{Name: name, Cluster: cluster}},
+		Contexts:       []NamedContext{{Name: name, Context: Context{Cluster: name, User: name}}},
+		CurrentContext: name,
+		Users:          []NamedUser{{Name: name, User: admin.Users[0].User}},
+		Preferences:    make(map[string]interface{}),
+	}, nil
+}
+
+// AddClusterToKubeconfig adds a new cluster to the default kubeconfig
+func AddClusterToKubeconfig(ctx context.Context, b runtime.Runtime, clusterName, containerName string) error {
+	ckc, err := ClusterKubeconfig(ctx, b, clusterName, containerName)
+	if err != nil {
+		return err
 	}
 
 	// Load or create the default kubeconfig
-	kubeconfigPath := defaultKubeconfigPath()
+	kubeconfigPath := DefaultKubeconfigPath()
 	var kc *Kubeconfig
 	if _, err := os.Stat(kubeconfigPath); os.IsNotExist(err) {
 		kc = &Kubeconfig{
@@ -387,40 +404,12 @@ func AddClusterToKubeconfig(ctx context.Context, b runtime.Runtime, clusterName,
 		}
 	}
 
-	// Remove existing cluster/context/user with same names
+	// Replace any existing cluster/context/user with the same names
 	kc = removeClusterFromKubeconfig(kc, clusterName)
-
-	clusterNameFormatted := fmt.Sprintf("k0da-%s", clusterName)
-	contextNameFormatted := fmt.Sprintf("k0da-%s", clusterName)
-	userNameFormatted := fmt.Sprintf("k0da-%s", clusterName)
-
-	// Add cluster
-	if len(containerKubeconfig.Clusters) > 0 {
-		kc.Clusters = append(kc.Clusters, NamedCluster{
-			Name:    clusterNameFormatted,
-			Cluster: containerKubeconfig.Clusters[0].Cluster,
-		})
-	}
-	// Add context
-	if len(containerKubeconfig.Contexts) > 0 {
-		kc.Contexts = append(kc.Contexts, NamedContext{
-			Name: contextNameFormatted,
-			Context: Context{
-				Cluster: clusterNameFormatted,
-				User:    userNameFormatted,
-			},
-		})
-	}
-	// Add user
-	if len(containerKubeconfig.Users) > 0 {
-		kc.Users = append(kc.Users, NamedUser{
-			Name: userNameFormatted,
-			User: containerKubeconfig.Users[0].User,
-		})
-	}
-
-	// Set as current context
-	kc.CurrentContext = contextNameFormatted
+	kc.Clusters = append(kc.Clusters, ckc.Clusters...)
+	kc.Contexts = append(kc.Contexts, ckc.Contexts...)
+	kc.Users = append(kc.Users, ckc.Users...)
+	kc.CurrentContext = ckc.CurrentContext
 
 	// Save kubeconfig
 	if err := SaveKubeconfig(kc, kubeconfigPath); err != nil {
@@ -432,7 +421,7 @@ func AddClusterToKubeconfig(ctx context.Context, b runtime.Runtime, clusterName,
 
 // RemoveClusterFromKubeconfig removes a cluster from the default kubeconfig
 func RemoveClusterFromKubeconfig(clusterName string) error {
-	kubeconfigPath := defaultKubeconfigPath()
+	kubeconfigPath := DefaultKubeconfigPath()
 
 	var kc *Kubeconfig
 	if _, err := os.Stat(kubeconfigPath); os.IsNotExist(err) {

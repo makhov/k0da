@@ -46,6 +46,19 @@ func NewPodmanRuntime(ctx context.Context, socket string) (*Podman, error) {
 
 func (p *Podman) Name() string { return p.name }
 
+// stdout runs cmd and returns what it wrote to stdout alone: podman also
+// prints warnings to stderr (such as "Could not find mount at destination"
+// from inspect on k0da's nodes), which would spoil output that's parsed.
+// On failure, the error carries stderr.
+func stdout(cmd *exec.Cmd) ([]byte, error) {
+	out, err := cmd.Output()
+	var ee *exec.ExitError
+	if errors.As(err, &ee) {
+		return out, fmt.Errorf("%w: %s", err, strings.TrimSpace(string(ee.Stderr)))
+	}
+	return out, err
+}
+
 // IsRootless reports whether podman runs containers as an unprivileged user.
 func (p *Podman) IsRootless(ctx context.Context) (bool, error) {
 	args := p.argsWithConnection([]string{"info", "--format", "{{.Host.Security.Rootless}}"})
@@ -170,7 +183,7 @@ func (p *Podman) ContainerExists(ctx context.Context, name string) (bool, error)
 
 func (p *Podman) ContainerIsRunning(ctx context.Context, name string) (bool, error) {
 	cmd := p.withEnv(exec.CommandContext(ctx, "podman", p.argsWithConnection([]string{"inspect", "-t", "container", name, "--format", "{{.State.Running}}"})...))
-	out, err := cmd.CombinedOutput()
+	out, err := stdout(cmd)
 	if err != nil {
 		return false, err
 	}
@@ -208,9 +221,9 @@ func (p *Podman) GetPortMapping(ctx context.Context, name string, containerPort 
 		proto = "tcp"
 	}
 	cmd := p.withEnv(exec.CommandContext(ctx, "podman", p.argsWithConnection([]string{"port", name, fmt.Sprintf("%d/%s", containerPort, proto)})...))
-	out, err := cmd.CombinedOutput()
+	out, err := stdout(cmd)
 	if err != nil {
-		return "", 0, fmt.Errorf("podman port failed: %s", strings.TrimSpace(string(out)))
+		return "", 0, fmt.Errorf("podman port failed: %w", err)
 	}
 	s := strings.TrimSpace(string(out))
 	if s == "" {
@@ -254,9 +267,9 @@ func (p *Podman) ListContainersByLabel(ctx context.Context, selector map[string]
 		args = append(args, "--filter", fmt.Sprintf("label=%s=%s", k, v))
 	}
 	cmd := p.withEnv(exec.CommandContext(ctx, "podman", p.argsWithConnection(args)...))
-	out, err := cmd.CombinedOutput()
+	out, err := stdout(cmd)
 	if err != nil {
-		return nil, fmt.Errorf("podman ps failed: %s", strings.TrimSpace(string(out)))
+		return nil, fmt.Errorf("podman ps failed: %w", err)
 	}
 	var arr []map[string]any
 	if err := json.Unmarshal(out, &arr); err != nil {
@@ -376,7 +389,7 @@ func (p *Podman) EnsureNetwork(ctx context.Context, name string) error {
 // `podman system connection list --format json`.
 func findPreferredPodmanConnection(ctx context.Context) (string, bool) {
 	cmd := exec.CommandContext(ctx, "podman", "system", "connection", "list", "--format", "json")
-	out, err := cmd.CombinedOutput()
+	out, err := stdout(cmd)
 	if err != nil || len(out) == 0 {
 		return "", false
 	}

@@ -322,8 +322,8 @@ k0da create cluster dev \
   --volume $(pwd):/workspace \
   --port-mapping 8080:80
 
-# Set up kubeconfig
-k0da kubeconfig dev --merge
+# k0da create made it the current context; to switch back to it later:
+k0da context k0da-dev
 
 # Your development cycle:
 # 1. Make code changes
@@ -343,7 +343,6 @@ k0da create cluster test-env \
   --wait
 
 # Run your test suite
-k0da kubeconfig test-env --merge
 kubectl config use-context k0da-test-env
 
 # Deploy test applications

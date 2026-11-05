@@ -1,140 +1,67 @@
 package cmd
 
 import (
-	"os"
-	"path/filepath"
+	"bytes"
+	"context"
 	"testing"
 
-	"github.com/makhov/k0da/internal/utils"
+	"github.com/makhov/k0da/internal/runtime"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func TestKubeconfigCommand(t *testing.T) {
-	// Create a temporary directory for testing
-	tempDir := t.TempDir()
-	originalHome := os.Getenv("HOME")
-	_ = os.Setenv("HOME", tempDir)
-	defer func() { _ = os.Setenv("HOME", originalHome) }()
-
-	// Create the unified kubeconfig directory
-	kubeconfigDir := filepath.Join(tempDir, ".kube")
-	err := os.MkdirAll(kubeconfigDir, 0755)
-	require.NoError(t, err)
-
-	// Create a test unified kubeconfig
-	unifiedKubeconfig := &utils.Kubeconfig{
-		APIVersion:     "v1",
-		Kind:           "Config",
-		CurrentContext: "k0da-test-cluster",
-		Clusters: []utils.NamedCluster{
-			{
-				Name: "k0da-test-cluster",
-				Cluster: utils.Cluster{
-					Server:                   "https://localhost:6443",
-					CertificateAuthorityData: "LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSURBRENDQWVpZ0F3SUJBZ0lVSS93UE92",
-				},
-			},
-		},
-		Contexts: []utils.NamedContext{
-			{
-				Name: "k0da-test-cluster",
-				Context: utils.Context{
-					Cluster: "k0da-test-cluster",
-					User:    "k0da-test-cluster",
-				},
-			},
-		},
-		Users: []utils.NamedUser{
-			{
-				Name: "k0da-test-cluster",
-				User: utils.User{
-					ClientCertificateData: "LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSURXVENDQWtHZ0F3SUJBZ0lVSHdINlRzTjh",
-					ClientKeyData:         "LS0tLS1CRUdJTiBSU0EgUFJJVkFURSBLRVktLS0tLQpNSUlFcFFJQkFBS0NBUUVBMGxIMXZhL3QxZmNlSnh",
-				},
-			},
-		},
-	}
-
-	// Save the unified kubeconfig
-	unifiedKubeconfigPath := filepath.Join(kubeconfigDir, "config")
-	err = utils.SaveKubeconfig(unifiedKubeconfig, unifiedKubeconfigPath)
-	require.NoError(t, err)
-
-	// Test the kubeconfig command function directly
-	kubeconfigClusterName = "test-cluster"
-
-	// Capture output
-	originalStdout := os.Stdout
-	r, w, _ := os.Pipe()
-	os.Stdout = w
-
-	err = runKubeconfig(kubeconfigCmd, []string{})
-	_ = w.Close()
-
-	// Read output
-	output := make([]byte, 1024)
-	n, _ := r.Read(output)
-	os.Stdout = originalStdout
-
-	// Check that the command succeeded
-	assert.NoError(t, err)
-
-	// Check that the output contains expected kubeconfig elements
-	outputStr := string(output[:n])
-	assert.Contains(t, outputStr, "apiVersion: v1")
-	assert.Contains(t, outputStr, "kind: Config")
-	assert.Contains(t, outputStr, "name: k0da-test-cluster")
-	assert.Contains(t, outputStr, "server: https://localhost:6443")
-	assert.Contains(t, outputStr, "current-context: k0da-test-cluster")
+// kubeconfigRuntime is a cluster's controller as printKubeconfig sees it;
+// the rest of runtime.Runtime is not called.
+type kubeconfigRuntime struct {
+	runtime.Runtime
+	running bool
 }
 
-func TestKubeconfigCommandClusterNotFound(t *testing.T) {
-	// Create a temporary directory for testing
-	tempDir := t.TempDir()
-	originalHome := os.Getenv("HOME")
-	_ = os.Setenv("HOME", tempDir)
-	defer func() { _ = os.Setenv("HOME", originalHome) }()
-
-	// Create the unified kubeconfig directory
-	kubeconfigDir := filepath.Join(tempDir, ".kube")
-	err := os.MkdirAll(kubeconfigDir, 0755)
-	require.NoError(t, err)
-
-	// Create an empty unified kubeconfig
-	unifiedKubeconfig := &utils.Kubeconfig{
-		APIVersion:     "v1",
-		Kind:           "Config",
-		CurrentContext: "",
-		Clusters:       []utils.NamedCluster{},
-		Contexts:       []utils.NamedContext{},
-		Users:          []utils.NamedUser{},
-	}
-
-	// Save the unified kubeconfig
-	unifiedKubeconfigPath := filepath.Join(kubeconfigDir, "config")
-	err = utils.SaveKubeconfig(unifiedKubeconfig, unifiedKubeconfigPath)
-	require.NoError(t, err)
-
-	// Test the kubeconfig command with non-existent cluster
-	kubeconfigClusterName = "non-existent-cluster"
-
-	err = runKubeconfig(kubeconfigCmd, []string{})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "cluster 'non-existent-cluster' not found")
+func (r *kubeconfigRuntime) ContainerIsRunning(_ context.Context, _ string) (bool, error) {
+	return r.running, nil
 }
 
-func TestKubeconfigCommandNoUnifiedKubeconfig(t *testing.T) {
-	// Create a temporary directory for testing
-	tempDir := t.TempDir()
-	originalHome := os.Getenv("HOME")
-	_ = os.Setenv("HOME", tempDir)
-	defer func() { _ = os.Setenv("HOME", originalHome) }()
+func (r *kubeconfigRuntime) ExecInContainer(_ context.Context, _ string, _ []string) (string, int, error) {
+	return `apiVersion: v1
+kind: Config
+clusters:
+- name: k0s-admin
+  cluster:
+    server: https://172.18.0.2:6443
+    certificate-authority-data: Cg==
+contexts:
+- name: admin@k0s
+  context:
+    cluster: k0s-admin
+    user: k0s-admin
+users:
+- name: k0s-admin
+  user:
+    client-certificate-data: Cg==
+    client-key-data: Cg==
+`, 0, nil
+}
 
-	// Test the kubeconfig command when no unified kubeconfig exists
-	kubeconfigClusterName = "test-cluster"
+func (r *kubeconfigRuntime) GetPortMapping(_ context.Context, _ string, _ int, _ string) (string, int, error) {
+	return "0.0.0.0", 52345, nil
+}
 
-	err := runKubeconfig(kubeconfigCmd, []string{})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "no unified kubeconfig found")
+func TestPrintKubeconfig(t *testing.T) {
+	// No kubeconfig file anywhere: it comes from the controller.
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("KUBECONFIG", "")
+
+	var out bytes.Buffer
+	require.NoError(t, printKubeconfig(context.Background(), &kubeconfigRuntime{running: true}, "doom", &out))
+	s := out.String()
+	assert.Contains(t, s, "current-context: k0da-doom")
+	assert.Contains(t, s, "name: k0da-doom")
+	assert.Contains(t, s, "server: https://127.0.0.1:52345")
+	assert.Contains(t, s, "client-key-data: Cg==")
+}
+
+func TestPrintKubeconfigClusterNotFound(t *testing.T) {
+	err := printKubeconfig(context.Background(), &kubeconfigRuntime{}, "nope", &bytes.Buffer{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cluster 'nope' not found")
 }
