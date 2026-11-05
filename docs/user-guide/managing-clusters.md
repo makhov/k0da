@@ -176,8 +176,8 @@ kubectl config current-context
 # Get kubeconfig for a specific cluster
 k0da kubeconfig my-cluster
 
-# Merge cluster kubeconfig with your default kubeconfig
-k0da kubeconfig my-cluster --merge
+# Switch your default kubeconfig to the cluster (k0da create added it there)
+k0da context k0da-my-cluster
 
 # Save kubeconfig to a specific file
 k0da kubeconfig my-cluster > my-cluster-kubeconfig.yaml

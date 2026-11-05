@@ -42,10 +42,12 @@ my-first-cluster  Running   1        v1.29.0+k0s.0
 
 ### Step 3: Get Kubeconfig
 
-k0da configures kubectl to connect to your cluster automatically. To view the kubeconfig for the cluster run:
+k0da configures kubectl to connect to your cluster automatically: `k0da create`
+adds the cluster to your default kubeconfig (the first file of `$KUBECONFIG`,
+or `~/.kube/config`) and makes it the current context. To print the cluster's
+kubeconfig on its own, run:
 
 ```bash
-# Get kubeconfig and save to default location
 k0da kubeconfig my-first-cluster
 ```
 
